@@ -16,6 +16,17 @@ The idea of this repository is inspired by
 * Morty >= 0.9.0
 * Python >= 3.11
 
+Additionally, you should set "OPENAI_API_KEY", "ANTHROPIC_API_KEY" or other keys
+in your env variables to use a cloud LLM provider's APIs, or create **key.cfg**
+file. The file should be in format of:
+
+```
+OPENAI_API_KEY= 'xxxxxxx'
+ANTHROPIC_API_KEY= 'xxxxxxx'
+VERTEX_SERVICE_ACCOUNT_PATH= 'xxxxxxx'
+VERTEX_REGION= 'xxxxxxx'
+```
+
 ## Getting started
 
 This project uses Git submodules that have to be initialized. Either clone the repository recursively using:
@@ -56,7 +67,16 @@ The list of (RTL DUT, TB) pairs and their original asset have to be listed in a
 JSON file. We provide a sample file in `$ROOT/benchmarks.json` file. Then call:
 
 ```bash
-./scripts/bench-gen.sh --json benchmarks.json --out out/
+./scripts/bench-gen.sh \
+  --json benchmarks.json \
+  --out out \
+  --provider openai \
+  --model gpt-4o-2024-08-06 \
+  --key-cfg ./key.cfg \
+  --max-token 8192 \
+  --tokens 60000 \
+  --temperature 0.6 \
+  --top-p 0.95
 ```
 
 ## Output
