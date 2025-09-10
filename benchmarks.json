@@ -1,0 +1,5 @@
+{
+  "assets/common_cells": [
+    ["assets/common_cells/fifo_v3.sv", "assets/common_cells/fifo_tb.sv"]
+  ]
+}

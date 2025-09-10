@@ -1,0 +1,449 @@
+#!/usr/bin/env python3
+import argparse, glob, json, os, re, subprocess, sys, fnmatch
+from collections import deque, defaultdict
+from typing import Dict, List, Set, Tuple, Optional
+
+try:
+    import yaml
+except ImportError:
+    print("Please install PyYAML: pip install pyyaml", file=sys.stderr); sys.exit(1)
+
+# -------- Regexes --------
+LEVEL_RE = re.compile(r"#\s*Level\s+(\d+)\b", re.I)
+FILE_ITEM_RE = re.compile(r"^\s*-\s+([^\s#]+)\s*$")
+FILES_KEY_RE = re.compile(r"^\s*files\s*:\s*$", re.I)
+SV_MODULE_DEF_RE = re.compile(r"^\s*module\s+([A-Za-z_]\w*)\b", re.M)
+SV_PACKAGE_DEF_RE = re.compile(r"^\s*package\s+([A-Za-z_]\w*)\b", re.M)
+SV_PACKAGE_USE_IMPORT_RE = re.compile(r"\bimport\s+([A-Za-z_]\w*)\s*::\s*\*", re.M)
+SV_PACKAGE_SCOPED_USE_RE = re.compile(r"\b([A-Za-z_]\w*)\s*::\s*[A-Za-z_]\w*", re.M)
+SV_INCLUDE_RE = re.compile(r'^[ \t]*`include[ \t]+"([^"]+)"', re.M)
+SV_INSTANTIATION_RE = re.compile(r"""
+    (?<![\w$])(?P<mod>[A-Za-z_]\w*)\s*
+    (?:\#\s*\((?:[^()]|\([^()]*\))*\)\s*)?
+    (?P<inst>[A-Za-z_]\w*)\s*(?:\[[^\]]+\]\s*)?\(
+""", re.M|re.S|re.X)
+EXCLUDE_BEFORE_RE = re.compile(r"\b(module|macromodule|primitive|interface|class|package|program|checker|function|task|typedef|struct|union|enum)\b")
+
+# -------- Small utils --------
+norm = lambda p: os.path.normpath(os.path.realpath(p))
+normalize_name = lambda s: re.sub(r"[_\-.]", "", s).lower()
+def is_tb(path:str)->bool:
+    b=os.path.basename(path).lower()
+    return path.startswith("test/") or b.endswith("_tb.sv") or b.endswith("_tb.v")
+
+# -------- YAML helpers --------
+def read_levels_from_bender_yaml_text(text:str)->Dict[str,int]:
+    levels, in_src, cur = {}, False, 0
+    for line in text.splitlines():
+        if not in_src:
+            if re.match(r"^\s*sources\s*:\s*$", line): in_src=True
+            continue
+        if re.match(r"^[A-Za-z_]\w*\s*:\s*$", line) and not line.startswith("  "): break
+        if FILES_KEY_RE.match(line): cur=0; continue
+        mlev = LEVEL_RE.search(line)
+        if mlev: cur=int(mlev.group(1)); continue
+        mfile = FILE_ITEM_RE.match(line)
+        if mfile:
+            p=mfile.group(1)
+            if p.endswith((".sv",".v",".svh")): levels[p]=cur
+    return levels
+
+def extract_sources_from_yaml(y)->List[str]:
+    def walk(n):
+        if isinstance(n, list):
+            for it in n: yield from walk(it)
+        elif isinstance(n, dict):
+            fs=n.get("files")
+            if isinstance(fs, list):
+                for f in fs:
+                    if isinstance(f,str) and f.endswith((".sv",".v",".svh")): yield f
+                    elif isinstance(f,dict): yield from walk(f)
+            for v in n.values(): yield from walk(v)
+    return list(walk(y.get("sources"))) if isinstance(y,dict) and "sources" in y else []
+
+# -------- Repo model --------
+class RepoIndex:
+    def __init__(self, root:str, yml:str, name:str):
+        self.root, self.bender_yml, self.name = norm(root), yml, name
+        self.levels_map: Dict[str,int] = {}
+        self.level_to_mods: Dict[int,Dict[str,str]] = {}
+        self.packages: Dict[str,str] = {}
+        self._cache: Dict[str,str] = {}
+    def read_text(self, ap:str)->str:
+        if ap not in self._cache:
+            try:
+                with open(ap,"r",encoding="utf-8",errors="replace") as f: self._cache[ap]=f.read()
+            except Exception: self._cache[ap]=""
+        return self._cache[ap]
+    def resolve(self, path:str, includer:Optional[str]=None)->Optional[str]:
+        if os.path.isabs(path) and os.path.exists(path): return norm(path)
+        if includer:
+            cand = norm(os.path.join(os.path.dirname(includer), path))
+            if os.path.exists(cand): return cand
+        cand2 = norm(os.path.join(self.root, path))
+        return cand2 if os.path.exists(cand2) else None
+    def build(self):
+        raw=open(self.bender_yml,"r",encoding="utf-8").read()
+        try: y=yaml.safe_load(raw)
+        except Exception: y=None
+        lv = read_levels_from_bender_yaml_text(raw)
+        if lv: self.levels_map = lv
+        else:  self.levels_map = {p:0 for p in (extract_sources_from_yaml(y) if y else []) if p.endswith((".sv",".v",".svh"))}
+        for p,l in self.levels_map.items():
+            if not is_tb(p) and p.endswith((".sv",".v")):
+                self.level_to_mods.setdefault(l,{})[os.path.splitext(os.path.basename(p))[0]] = p
+        for rel in list(self.levels_map.keys()):
+            if not rel.endswith((".sv",".v",".svh")): continue
+            ap=self.resolve(rel);  txt=self.read_text(ap) if ap else ""
+            for m in SV_PACKAGE_DEF_RE.finditer(txt): self.packages[m.group(1)] = rel
+
+# -------- Loader --------
+def load_repos(main_yml:str)->List[RepoIndex]:
+    root = norm(os.path.dirname(main_yml))
+    main_yaml = yaml.safe_load(open(main_yml,"r",encoding="utf-8"))
+    repos: List[RepoIndex] = []; seen:set=set()
+    def add(r, y, n):
+        ay=norm(y)
+        if ay in seen: return
+        ri=RepoIndex(r,y,n); ri.build(); repos.append(ri); seen.add(ay)
+    add(root, main_yml, "main")
+    q=deque((n,s) for n,s in (main_yaml.get("dependencies") or {}).items())
+    co=os.path.join(root, ".bender","git","checkouts")
+    while q:
+        dep,_=q.popleft()
+        m=sorted(glob.glob(os.path.join(co,f"{dep}-*","Bender.yml")))
+        if not m: continue
+        dep_yml=m[0]; add(os.path.dirname(dep_yml), dep_yml, dep)
+        try:
+            y=yaml.safe_load(open(dep_yml,"r",encoding="utf-8"))
+            for sn,ss in (y.get("dependencies") or {}).items(): q.append((sn,ss))
+        except Exception: pass
+    return repos
+
+# -------- Indices / helpers --------
+def build_indices(repos:List[RepoIndex]):
+    mod_idx: Dict[str,List[Tuple[int,str,int]]] = defaultdict(list)
+    pkg_idx: Dict[str,List[Tuple[int,str]]] = defaultdict(list)
+    for i,r in enumerate(repos):
+        for lvl,mods in r.level_to_mods.items():
+            for mod,p in mods.items(): mod_idx[mod].append((i,p,lvl))
+        for pkg,p in r.packages.items(): pkg_idx[pkg].append((i,p))
+    return mod_idx, pkg_idx
+
+def file_defines_module(text:str, mod:str)->bool:
+    return any(m.group(1)==mod for m in SV_MODULE_DEF_RE.finditer(text))
+
+def _split_tokens(tokens: List[str]) -> List[str]:
+    out=[]
+    for t in tokens or []:
+        if t is None: continue
+        parts=[p for p in (s.strip() for s in t.split(",")) if p]
+        out.extend(parts)
+    return out
+
+def select_tb_roots(repos:List[RepoIndex], tokens:List[str])->Set[str]:
+    """
+    Select TB roots by matching stems against provided tokens.
+    - Supports shell wildcards (* ? [abc]).
+    - If only one TB exists overall and exactly one non-wildcard token is provided,
+      require an exact (case-insensitive) stem match.
+    - Otherwise, each token: if contains wildcard -> fnmatch; else exact stem match.
+    """
+    patterns=_split_tokens(tokens)
+    roots=set()
+    # Build list of all TB stems and their absolute paths
+    tb_entries: List[Tuple[str,str]] = []  # (stem_lower, abs_path)
+    for r in repos:
+        for p in r.levels_map.keys():
+            if not is_tb(p): continue
+            ap=r.resolve(p)
+            if not ap: continue
+            stem=os.path.splitext(os.path.basename(p))[0]
+            tb_entries.append((stem.lower(), ap))
+    if not tb_entries or not patterns:
+        return roots
+
+    wildcard_chars=set("*?[")
+
+    if len(tb_entries)==1 and len(patterns)==1 and not (set(patterns[0]) & wildcard_chars):
+        # exact match required
+        only_stem = tb_entries[0][0]
+        if patterns[0].lower()==only_stem:
+            roots.add(tb_entries[0][1])
+        return roots
+
+    stems = [s for s,_ in tb_entries]
+    for tok in patterns:
+        has_wild = any(ch in tok for ch in wildcard_chars)
+        if has_wild:
+            for stem, ap in tb_entries:
+                if fnmatch.fnmatchcase(stem, tok.lower()):
+                    roots.add(ap)
+        else:
+            # exact case-insensitive stem match
+            for stem, ap in tb_entries:
+                if stem == tok.lower():
+                    roots.add(ap)
+    return roots
+
+# -------- Core traversal --------
+def collect_used_set(repos:List[RepoIndex], starts:List[Tuple[int,str,int]]):
+    mod_idx,_ = build_indices(repos)
+    used:set=set(); dep=defaultdict(list)
+    abs2info: Dict[str,Tuple[int,str,int]] = {}
+    for i,r in enumerate(repos):
+        for rel,lvl in r.levels_map.items():
+            ap=r.resolve(rel)
+            if ap: abs2info[ap]=(i,rel,lvl)
+    def scan_nonmod(fap:str, txt:str):
+        if not txt: return
+        for m in SV_INCLUDE_RE.finditer(txt):
+            inc = repos[abs2info.get(fap,(0,"",0))[0]].resolve(m.group(1), includer=fap)
+            if inc and inc not in used:
+                used.add(inc); scan_nonmod(inc, repos[abs2info.get(fap,(0,"",0))[0]].read_text(inc))
+        for m in SV_PACKAGE_USE_IMPORT_RE.finditer(txt):
+            pkg=m.group(1)
+            for i,r in enumerate(repos):
+                rel=r.packages.get(pkg)
+                if rel:
+                    ap=r.resolve(rel)
+                    if ap and ap not in used:
+                        used.add(ap); dep[fap].append((ap, r.levels_map.get(rel,0), r.name))
+                        scan_nonmod(ap, r.read_text(ap))
+        for m in SV_PACKAGE_SCOPED_USE_RE.finditer(txt):
+            pkg=m.group(1)
+            for i,r in enumerate(repos):
+                rel=r.packages.get(pkg)
+                if rel:
+                    ap=r.resolve(rel)
+                    if ap and ap not in used:
+                        used.add(ap); dep[fap].append((ap, r.levels_map.get(rel,0), r.name))
+                        scan_nonmod(ap, r.read_text(ap))
+    q=deque()
+    for ri,ap,lvl in starts: used.add(ap); q.append((ri,ap,lvl))
+    seen=set()
+    while q:
+        ri,cur,lvl=q.popleft()
+        if cur in seen: continue
+        seen.add(cur)
+        r=repos[ri]; txt=r.read_text(cur); scan_nonmod(cur, txt)
+        inst=set()
+        if txt:
+            for m in SV_INSTANTIATION_RE.finditer(txt):
+                if not EXCLUDE_BEFORE_RE.search(txt[max(0,m.start()-64):m.start()]): inst.add(m.group("mod"))
+        if lvl>0 and inst:
+            for lo in range(lvl-1,-1,-1):
+                mods=r.level_to_mods.get(lo,{})
+                for mod in inst:
+                    rel=mods.get(mod);  ap=r.resolve(rel) if rel else None
+                    if not ap or (txt and file_defines_module(txt,mod)): continue
+                    if ap not in used: used.add(ap)
+                    dep[cur].append((ap, lo, r.name))
+                    if lo>0: q.append((ri,ap,lo))
+        if inst:
+            for mod in inst:
+                cands=sorted(mod_idx.get(mod,[]), key=lambda t: t[2] or 0)
+                for rj,rel,lv in cands:
+                    if rj==ri: continue
+                    ap=repos[rj].resolve(rel)
+                    if not ap: continue
+                    if ap not in used: used.add(ap)
+                    dep[cur].append((ap, lv, repos[rj].name))
+                    if lv and lv>0: q.append((rj,ap,lv))
+    return used, dep
+
+# -------- JSON trimming --------
+def trim_json_manifest(full_path:str, used_abs:Set[str], out_path:str):
+    data=json.load(open(full_path,"r",encoding="utf-8"))
+    used_norm={norm(p) for p in used_abs}
+    present:set=set()
+    def collect(obj):
+        if isinstance(obj,dict):
+            for k,v in obj.items():
+                if k=="files" and isinstance(v,list):
+                    for it in v:
+                        if isinstance(it,str): present.add(norm(it))
+                        else: collect(it)
+                else: collect(v)
+        elif isinstance(obj,list):
+            for it in obj: collect(it)
+    collect(data)
+    def filt(files):
+        out=[]
+        for it in files:
+            if isinstance(it,str):
+                if norm(it) in used_norm: out.append(it)
+            elif isinstance(it,dict):
+                n=dict(it)
+                if isinstance(n.get("files"),list):
+                    n["files"]=filt(n["files"])
+                    if n["files"]: out.append(n)
+                else: out.append(n)
+            else: out.append(it)
+        return out
+    export_hint={}
+    if isinstance(data,dict):
+        export_hint=data.get("export_incdirs",{})
+        if isinstance(data.get("files"),list): data["files"]=filt(data["files"])
+        miss=[p for p in used_norm if p.endswith(".svh") and p not in present]
+        if miss:
+            data.setdefault("files",[]).append({
+                "package":None,"independent":False,"target":"*","include_dirs":[],
+                "export_incdirs": export_hint if isinstance(export_hint,dict) else {},
+                "defines":{},"files":sorted(miss)
+            })
+    elif isinstance(data,list):
+        trimmed=[]
+        for g in data:
+            if isinstance(g,dict) and isinstance(g.get("files"),list):
+                export_hint=g.get("export_incdirs",export_hint)
+                ng=dict(g); ng["files"]=filt(g["files"])
+                if ng["files"]: trimmed.append(ng)
+            else: trimmed.append(g)
+        data=trimmed
+        miss=[p for p in used_norm if p.endswith(".svh") and p not in present]
+        if miss:
+            data.append({"package":None,"independent":False,"target":"*","include_dirs":[],
+                         "export_incdirs": export_hint if isinstance(export_hint,dict) else {},
+                         "defines":{},"files":sorted(miss)})
+    with open(out_path,"w",encoding="utf-8") as f:
+        json.dump(data,f,indent=2,ensure_ascii=False); f.write("\n")
+
+# -------- (legacy) flist trimming --------
+def extract_path_from_line(line:str)->Optional[str]:
+    s=line.strip()
+    if not s or s.startswith("#"): return None
+    for tok in reversed(s.split()):
+        t=tok.strip('",')
+        if t.endswith((".sv",".v",".svh")): return t
+    m=re.search(r'"([^"]+\.(?:svh?|v))"', s);  return m.group(1) if m else None
+
+def trim_filelist(full_f:str, used_abs:Set[str], out_f:str):
+    lines=open(full_f,"r",encoding="utf-8").read().splitlines()
+    used_norm={os.path.normpath(p) for p in used_abs}; kept=[]; seen=set()
+    for ln in lines:
+        p=extract_path_from_line(ln)
+        if not p: kept.append(ln); continue
+        ap=norm(p if os.path.isabs(p) else os.path.abspath(p))
+        if ap in used_norm: kept.append(ln); seen.add(ap)
+    miss=[p for p in used_abs if p.endswith(".svh") and os.path.normpath(p) not in seen]
+    if miss:
+        kept+=["", "# Appended headers detected via `include`/package use"]
+        kept+=sorted(os.path.relpath(h,start=os.getcwd()) for h in miss)
+    with open(out_f,"w",encoding="utf-8") as f:
+        f.write("\n".join(kept)+("\n" if kept and not kept[-1].endswith("\n") else ""))
+
+# -------- Targets / suffix helpers --------
+def derive_suffix(targets: List[str]) -> str:
+    ts=set(t.lower() for t in targets)
+    has_rtl = "rtl" in ts
+    has_tb  = any(t in ts for t in ("test","simulation"))
+    if has_rtl and has_tb: return "rtltb"
+    if has_rtl: return "rtl"
+    if has_tb: return "tb"
+    return "_".join(sorted(ts)) if ts else "rtl"
+
+def build_bender_cmd(targets: List[str]) -> List[str]:
+    cmd = ["bender","sources"]
+    for t in targets:
+        cmd += ["-t", t]
+    cmd += ["--flatten"]
+    return cmd
+
+# -------- Main --------
+def main():
+    ap=argparse.ArgumentParser(
+        description="Trim Bender --flatten JSON for chosen target(s); traverse real instantiations/imports/includes; output filtered JSON.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    ap.add_argument("--bender",default="Bender.yml", help="Path to main Bender.yml")
+    ap.add_argument("--top",required=True, help="Top RTL module filename (e.g., my_top.sv)")
+    # New: targets are user-controlled (repeatable)
+    ap.add_argument("-t","--target", action="append", default=[],
+                    help="Bender target(s), repeatable (e.g., -t rtl -t test -t simulation)")
+    # New: single arg for TBs: list + wildcards, can be repeated or comma-separated
+    ap.add_argument("--tb-token", action="append", default=[],
+                    help="Testbench top stem(s). Supports wildcards (* ? [..]). "
+                         "Pass multiple times or comma-separated. "
+                         "If only one TB exists overall and exactly one non-wildcard token is provided, requires exact match.")
+    ap.add_argument("--show-tree",action="store_true", help="Print dependency tree for chosen starts")
+    ap.add_argument("--no-run",action="store_true", help="Skip calling 'bender sources' (expects existing *.full.json)")
+    ap.add_argument("--out-prefix",default=None, help="Prefix for output files (default: derived from --top)")
+    args=ap.parse_args()
+
+    if not os.path.isfile(args.bender):
+        print("[ERROR] Bender file not found.",file=sys.stderr); sys.exit(1)
+
+    # Load repos and build indices
+    repos=load_repos(args.bender)
+    if not repos or not repos[0].levels_map:
+        print("[ERROR] No sources/levels parsed.",file=sys.stderr); sys.exit(1)
+
+    main_repo=repos[0]
+    top_norm=normalize_name(re.sub(r"\.sv$","",args.top, flags=re.I))
+
+    # Find top(s) in main repo at minimal level
+    tops=[(p,l) for p,l in main_repo.levels_map.items()
+          if not is_tb(p) and normalize_name(os.path.splitext(os.path.basename(p))[0])==top_norm
+          and (p.endswith(".sv") or p.endswith(".v"))]
+    if not tops:
+        print(f"[ERROR] Could not find top '{args.top}' in main repo.",file=sys.stderr); sys.exit(1)
+    sel_level=min(l for _,l in tops)
+    out=args.out_prefix or re.sub(r"\.sv$","",args.top, flags=re.I)
+
+    # Derive output suffix from targets and build filenames
+    targets = args.target or ["rtl"]
+    suffix = derive_suffix(targets)
+    full_json=f"{out}.{suffix}.full.json"
+    trimmed_json=f"{out}.{suffix}.json"
+
+    # Produce (or assume) flattened full JSON via bender for selected targets
+    if not args.no_run:
+        print(f"[RUN] {' '.join(build_bender_cmd(targets))} > {full_json}")
+        with open(full_json,"w",encoding="utf-8") as o:
+            subprocess.run(build_bender_cmd(targets),check=True,stdout=o)
+
+    # Build start set: selected top(s) at chosen level + optional TB roots
+    starts=[]
+    for p,l in tops:
+        if l==sel_level:
+            ap=main_repo.resolve(p)
+            if ap: starts.append((0,ap,l))
+
+    tb_roots = select_tb_roots(repos, args.tb_token)
+    if tb_roots:
+        # Map abs path -> (repo index, level)
+        abs2lvl={}
+        for i,r in enumerate(repos):
+            for rel,l in r.levels_map.items():
+                ap=r.resolve(rel)
+                if ap: abs2lvl[ap]=(i,l)
+        for apth in tb_roots:
+            ri,l = abs2lvl.get(apth,(0,0))
+            starts.append((ri,apth,l))
+
+    # Traverse and trim
+    used_set, dep_tree = collect_used_set(repos, starts)
+
+    if args.show_tree:
+        print(f"\n[Dependency Tree][{suffix.upper()}]")
+        def pt(tree,starts):
+            seen=set()
+            def base(p): return os.path.basename(p)
+            def walk(n,pfx,last):
+                print(f"{pfx}+- {base(n)}"); kids=tree.get(n,[])
+                if not kids: return
+                np=pfx+("   " if last else "¦  ")
+                for i,(ch,l,repo) in enumerate(kids):
+                    cyc=" () " if ch in seen else ""
+                    print(f"{np}+- {base(ch)} (L{l}, {repo}){cyc}")
+                    if ch in seen: continue
+                    seen.add(ch); walk(ch,np,i==len(kids)-1)
+            for s in starts: walk(s[1],"",True)
+        pt(dep_tree, starts)
+
+    trim_json_manifest(full_json, used_set, trimmed_json)
+    print(f"[OK] Wrote trimmed JSON: {trimmed_json}")
+
+if __name__ == "__main__":
+    main()

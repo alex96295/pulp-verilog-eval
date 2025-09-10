@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+import argparse, json, os, sys, re
+from typing import List, Tuple
+from llama_index.core.base.llms.types import ChatMessage, MessageRole
+from mage.gen_config import get_llm, get_exp_setting, set_exp_setting
+from mage.log_utils import get_logger
+from mage.utils import reformat_json_string
+from mage.token_counter import TokenCounter
+
+logger = get_logger(__name__)
+settings = get_exp_setting()
+
+EXAMPLE_SPEC = """\
+I would like you to implement a module named TopModule with the following
+interface. All input and output ports are one bit unless otherwise
+specified.
+
+ - input  clk
+ - input  in
+ - input  reset
+ - output out_byte (8 bits)
+ - output done
+
+In many (older) serial communications protocols, each data byte is sent
+along with a start bit and a stop bit, to help the receiver delimit bytes
+from the stream of bits. One common scheme is to use one start bit (0), 8
+data bits, and 1 stop bit (1). The line is also at logic 1 when nothing
+is being transmitted (idle). Design a finite state machine that will
+identify when bytes have been correctly received when given a stream of
+bits. It needs to identify the start bit, wait for all 8 data bits, then
+verify that the stop bit was correct. The module will also output the
+correctly-received data byte. `out_byte` needs to be valid when `done` is
+1, and is don't-care otherwise. If the stop bit does not appear when
+expected, the FSM must wait until it finds a stop bit before attempting
+to receive the next byte. Include a active-high synchronous reset. Note
+that the serial protocol sends the least significant bit first. It should
+assert done each time it finds a stop bit. Assume all sequential logic is
+triggered on the positive edge of the clock.
+"""
+
+SYSTEM_PROMPT = """
+You are an expert hardware specification writer. Produce a clear, standalone
+**specification document** for an RTL module **without leaking implementation details**
+from any provided reference RTL. The spec must:
+- Describe external behavior and interfaces (not the implementation).
+- Be detailed and unambiguous (longer specs are fine).
+- Avoid code, internal state names, or micro-architecture hints.
+
+Cover:
+1) Overview & assumptions.
+2) Interface (signals, dir, width, reset/polarity, timing).
+3) Protocols/handshakes (valid/ready, AXI/AXI-Lite, req/rsp).
+4) Behavioral requirements (corner cases, reset, backpressure, ordering, latency guarantees if applicable, errors).
+5) Configuration parameters visible at the boundary (names, ranges, semantics).
+6) Throughput/latency expectations at a spec level.
+7) Clocking/reset domains and constraints.
+8) Example timing/truth tables (no code).
+
+NEVER include implementation specifics gleaned from the RTL (FSM encodings, stage counts, pragmas, internal signal names that aren't externally mandated).
+Use the testbench/RTL only to infer intent and external requirements. Output Markdown only.
+"""
+
+USER_PROMPT_TEMPLATE = """
+Please write a **specification document** for a module to be designed, based on the behavior
+you can infer from the following testbench and the reference RTL. The spec must not reveal
+implementation details from the reference RTL; treat it only as a hint to understand intent.
+
+Target module name: {target_name}
+
+### Short exemplar spec (style only)
+```
+{example_spec}
+```
+
+### Your task
+- Produce a more detailed, production-quality spec than the exemplar.
+- Include an interface list with directions, widths, reset polarities, and timing.
+- Clearly describe protocols (valid/ready, AXI(-Lite), req/rsp, etc.).
+- Clarify configuration parameters & constraints visible at the interface.
+- Define behavior on reset, backpressure, invalid/exceptional inputs.
+- Avoid micro-architectural/implementation-specific guidance.
+
+### Provided Testbench (tb.sv)
+```systemverilog
+{tb_text}
+```
+
+### Provided Reference RTL (rtl_golden.sv)
+```systemverilog
+{rtl_text}
+```
+
+Return only the final specification in Markdown. Do not include code.
+"""
+
+def md_to_txt(md: str) -> str:
+    """Tiny Markdown ? plain text cleaner (safe for LLM ingestion)."""
+    txt = md
+    # strip fenced code blocks (keep their inner text)
+    txt = re.sub(r"```[\s\S]*?```",
+                 lambda m: re.sub(r"^```.*\n|\n```$", "", m.group(0), flags=re.M),
+                 txt)
+    # headers, emphasis (keep underscores)
+    txt = re.sub(r"^#{1,6}\s*", "", txt, flags=re.M)
+    txt = txt.replace("**", "").replace("*", "")
+    # inline code
+    txt = txt.replace("`", "")
+    # links: [text](url) ? text (url)
+    txt = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", txt)
+    # tables & blockquotes
+    txt = txt.replace("|", " ")
+    txt = re.sub(r"^\s*>\s?", "", txt, flags=re.M)
+    # collapse blank lines
+    txt = re.sub(r"\n{3,}", "\n\n", txt).strip()
+    return txt
+
+def _read(path: str) -> str:
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+def _soft_trim(counter: TokenCounter, parts: List[Tuple[str,int]], budget: int) -> List[str]:
+    """Greedily trims longest part by ~10% until within budget; each part keeps at least its reserve."""
+    ss, rs = [p for p,_ in parts], [r for _,r in parts]
+    cnts = [counter.count(s) for s in ss]
+    if sum(cnts) <= budget: return ss
+    import math
+    MINC=128
+    while sum(cnts) > budget:
+        i = max(range(len(cnts)), key=lambda k: cnts[k])
+        floor = max(rs[i], MINC)
+        if all(c <= max(r, MINC) for c,r in zip(cnts,rs)): break
+        if cnts[i] <= floor:
+            cands=[k for k,c in enumerate(cnts) if c>max(rs[k],MINC)]
+            if not cands: break
+            i=max(cands, key=lambda k: cnts[k])
+        new_len=max(floor,int(math.floor(cnts[i]*0.9)))
+        ratio=new_len/max(cnts[i],1)
+        cut=max(1,int(len(ss[i])*ratio))
+        ss[i]=ss[i][:cut]; cnts[i]=counter.count(ss[i])
+    return ss
+
+def main():
+    ap = argparse.ArgumentParser(description="Generate a spec (Markdown) from tb.sv + rtl_golden.sv via LLM, no implementation leakage.")
+    ap.add_argument("--tb", required=True, help="Path to the testbench file (SystemVerilog)")
+    ap.add_argument("--rtl", required=True, help="Path to the reference RTL file (SystemVerilog)")
+    ap.add_argument("--name", required=True, help="Target module name for the spec")
+    ap.add_argument("--out", default="spec.md", help="Output filename (default: spec.md)")
+    ap.add_argument("--provider", default="openai", help="LLM provider (e.g. openai, anthropic, vertex, etc.)")
+    ap.add_argument("--model", default="gpt-4o-2024-08-06", help="LLM model name")
+    ap.add_argument("--key-cfg-path", default="./key.cfg", help="Path to API keys configuration file")
+    ap.add_argument("--max-token", type=int, default=8192, help="Maximum tokens per LLM response")
+    ap.add_argument("--tokens", type=int, default=240000, help="Total token budget for prompt+inputs")
+    ap.add_argument("--temperature", type=float, default=0.85, help="LLM sampling temperature")
+    ap.add_argument("--top-p", type=float, default=0.95, help="LLM nucleus sampling parameter")
+    ap.add_argument("--tag", default="spec_gen", help="Tag for token counter logging")
+    args = ap.parse_args()
+
+    if not os.path.isfile(args.tb) or not os.path.isfile(args.rtl):
+        print("Input files not found.", file=sys.stderr); sys.exit(1)
+
+    # LLM selection via your gen_config
+    set_exp_setting(temperature=args.temperature, top_p=args.top_p)
+    llm = get_llm(model=args.model, cfg_path=args.key_cfg_path, max_token=args.max_token,
+                  provider=args.provider, temperature=args.temperature)
+
+    tc = TokenCounter(llm); tc.set_cur_tag(args.tag)
+    tb_txt, rtl_txt = _read(args.tb), _read(args.rtl)
+
+    sys_msg = ChatMessage(role=MessageRole.SYSTEM, content=SYSTEM_PROMPT)
+    user_raw = USER_PROMPT_TEMPLATE.format(target_name=args.name, example_spec=EXAMPLE_SPEC,
+                                           tb_text="{TB_PLACEHOLDER}", rtl_text="{RTL_PLACEHOLDER}")
+    static = user_raw.replace("{TB_PLACEHOLDER}","").replace("{RTL_PLACEHOLDER}","")
+    # budget: keep ~3k for prompt+example; split rest 60/40 TB/RTL
+    reserve=3000; rem=max(args.tokens-reserve,2000); tb_share=int(rem*0.6); rtl_share=rem-tb_share
+    trimmed = _soft_trim(tc, [(static,2000),(tb_txt,tb_share),(rtl_txt,rtl_share)], args.tokens)
+    user_final = user_raw.replace("{TB_PLACEHOLDER}", trimmed[1]).replace("{RTL_PLACEHOLDER}", trimmed[2])
+    user_msg = ChatMessage(role=MessageRole.USER, content=user_final)
+
+    resp, cnt = tc.count_chat([sys_msg, user_msg], llm=llm)
+    spec_md = (resp.message.content or "").strip()
+    try: spec_md = reformat_json_string(spec_md)
+    except Exception: pass
+
+    # Decide output paths
+    out_md = args.out if args.out.lower().endswith(".md") else f"{os.path.splitext(args.out)[0]}.md"
+    out_txt = f"{os.path.splitext(out_md)[0]}.txt"
+
+    with open(args.out,"w",encoding="utf-8") as f:
+        f.write(spec_md + ("" if spec_md.endswith("\n") else "\n"))
+
+    spec_txt = md_to_txt(spec_md)
+    with open(out_txt,"w",encoding="utf-8") as f:
+        f.write(spec_txt + ("" if spec_txt.endswith("\n") else "\n"))
+
+    stats = {"model": llm.metadata.model_name, "provider": args.provider,
+             "in_tokens": cnt.in_token_cnt, "out_tokens": cnt.out_token_cnt}
+    try:
+        cost = tc.token_cost
+        stats["estimated_usd"] = round(cnt.in_token_cnt*cost.in_token_cost_per_token +
+                                       cnt.out_token_cnt*cost.out_token_cost_per_token, 6)
+    except Exception: pass
+    with open(os.path.splitext(args.out)[0]+".usage.json","w",encoding="utf-8") as f:
+        json.dump(stats,f,indent=2)
+
+    logger.info(f"Wrote spec: {args.out}")
+    logger.info(f"Usage: in {cnt.in_token_cnt} tokens, out {cnt.out_token_cnt} tokens")
+    if "estimated_usd" in stats: logger.info(f"Estimated cost: ${stats['estimated_usd']:.4f}")
+
+if __name__ == "__main__":
+    main()

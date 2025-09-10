@@ -1,0 +1,6 @@
+[submodule "assets/common_cells"]
+	path = assets/common_cells
+	url = git@github.com:pulp-platform/common_cells.git
+[submodule "assets/axi"]
+	path = assets/axi
+	url = git@github.com:pulp-platform/axi.git
