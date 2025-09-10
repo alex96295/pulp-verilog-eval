@@ -1,4 +1,4 @@
-# PULP System Verilog evaluation benchmark for large language model
+# PULP System Verilog evaluation benchmark for large language models
 
 This repository creates a benchmark dataset from some of the open-source PULP
 designs in System Verilog, with the goal of using the benchmark to assess
