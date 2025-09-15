@@ -1,0 +1,110 @@
+Specification Document for Credit Counter Module
+
+Overview
+
+The credit_counter module is designed to manage a system of credits, allowing for the controlled increment and decrement of credit values. This module is suitable for applications where resource allocation and tracking are necessary, such as buffer management or flow control in data communication systems.
+
+Assumptions
+
+- The system using the credit_counter operates in a synchronous digital environment.
+- Credit increment and decrement operations are mutually exclusive per clock cycle.
+- Credit initialization can occur asynchronously with other operations and takes precedence.
+
+Interface
+
+Inputs
+
+- clk_i: Clock input signal.
+  - Direction: Input
+  - Width: 1 bit
+  - Timing: Rising edge sensitive
+
+- rst_ni: Asynchronous active-low reset.
+  - Direction: Input
+  - Width: 1 bit
+  - Polarity: Active-low
+
+- credit_give_i: Signal to increment the credit count.
+  - Direction: Input
+  - Width: 1 bit
+
+- credit_take_i: Signal to decrement the credit count.
+  - Direction: Input
+  - Width: 1 bit
+
+- credit_init_i: Signal to reinitialize (soft-reset) the credit count.
+  - Direction: Input
+  - Width: 1 bit
+  - Priority: High (takes precedence over other operations)
+
+Outputs
+
+- credit_o: Current credit count.
+  - Direction: Output
+  - Width: Derived from NumCredits parameter (logarithmic scale)
+
+- credit_left_o: Indicates if any credits are available.
+  - Direction: Output
+  - Width: 1 bit
+
+- credit_crit_o: Indicates if the next increment will fill the credits.
+  - Direction: Output
+  - Width: 1 bit
+
+- credit_full_o: Indicates if the credit count is at maximum capacity.
+  - Direction: Output
+  - Width: 1 bit
+
+Protocols/Handshakes
+
+The module does not implement a specific handshake protocol, such as valid/ready or AXI. Instead, it uses individual signals to manage credit increment and decrement operations. These operations should be coordinated externally to ensure mutual exclusivity per cycle.
+
+Behavioral Requirements
+
+- Reset Behavior: On asserting rst_ni (active-low), the credit counter resets to the InitNumCredits value.
+- Initialization Priority: When credit_init_i is asserted, the credit counter resets to InitNumCredits regardless of other inputs.
+- Mutual Exclusivity: credit_give_i and credit_take_i should not be asserted simultaneously. If they are, the module's behavior is undefined.
+- Underflow/Overflow Protection: The module includes assertions to prevent credit underflow and overflow. It will assert an error if an operation would result in negative credits or exceed the maximum defined by NumCredits.
+
+Configuration Parameters
+
+- NumCredits: Defines the maximum number of credits.
+  - Range: Positive integer
+  - Semantics: Sets the upper limit of the credit count.
+
+- InitCreditEmpty: Determines if the credit starts empty or full on reset.
+  - Range: Boolean
+  - Semantics: If true, credits start at zero; otherwise, they start at the maximum.
+
+Throughput/Latency Expectations
+
+- The module processes credit increment and decrement operations in one clock cycle, assuming inputs are set correctly.
+- Initialization using credit_init_i is immediate and takes effect within the same cycle it is asserted.
+
+Clocking/Reset Domains and Constraints
+
+- The module operates within a single clock domain defined by clk_i.
+- The reset signal rst_ni is asynchronous and active-low, affecting all credit operations.
+
+Example Timing/Truth Tables
+
+Timing Diagram
+
+  Cycle   rst_ni   credit_init_i   credit_give_i   credit_take_i   credit_o  
+ ------- ---------- ----------------- ----------------- ----------------- ------------ 
+  0       0          0                 0                 0                 InitNumCredits  
+  1       1          1                 0                 0                 InitNumCredits  
+  2       1          0                 1                 0                 InitNumCredits + 1  
+  3       1          0                 0                 1                 InitNumCredits  
+  4       1          0                 1                 1                 InitNumCredits (undefined behavior)  
+
+Truth Table for Output Flags
+
+  credit_o   credit_left_o   credit_crit_o   credit_full_o  
+ ------------ ----------------- ----------------- ----------------- 
+  0            0                 0                 0                
+  1 to NumCredits-1   1         0                 0                
+  NumCredits-1   1             1                 0                
+  NumCredits   1               0                 1                 
+
+This document provides a comprehensive specification for the credit_counter module, detailing its interface, expected behaviors, and constraints without delving into micro-architectural implementations.

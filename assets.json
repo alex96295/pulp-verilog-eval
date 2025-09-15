@@ -1,0 +1,6 @@
+{
+  "assets/common_cells": [
+    ["fifo_v3", "fifo_v3.sv", "fifo_tb.sv"],
+    ["credit_counter", "credit_counter.sv", ""]
+  ]
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import argparse, json, os, sys, re
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any, Optional
 from llama_index.core.base.llms.types import ChatMessage, MessageRole
 from mage.gen_config import get_llm, get_exp_setting, set_exp_setting
 from mage.log_utils import get_logger
@@ -29,7 +29,7 @@ is being transmitted (idle). Design a finite state machine that will
 identify when bytes have been correctly received when given a stream of
 bits. It needs to identify the start bit, wait for all 8 data bits, then
 verify that the stop bit was correct. The module will also output the
-correctly-received data byte. `out_byte` needs to be valid when `done` is
+correctly-received data byte. out_byte needs to be valid when done is
 1, and is don't-care otherwise. If the stop bit does not appear when
 expected, the FSM must wait until it finds a stop bit before attempting
 to receive the next byte. Include a active-high synchronous reset. Note
@@ -57,10 +57,10 @@ Cover:
 8) Example timing/truth tables (no code).
 
 NEVER include implementation specifics gleaned from the RTL (FSM encodings, stage counts, pragmas, internal signal names that aren't externally mandated).
-Use the testbench/RTL only to infer intent and external requirements. Output Markdown only.
+Use the RTL only to infer intent and external requirements. Output Markdown only.
 """
 
-USER_PROMPT_TEMPLATE = """
+USER_RTL_TB_PROMPT_TEMPLATE = """
 Please write a **specification document** for a module to be designed, based on the behavior
 you can infer from the following testbench and the reference RTL. The spec must not reveal
 implementation details from the reference RTL; treat it only as a hint to understand intent.
@@ -84,6 +84,34 @@ Target module name: {target_name}
 ```systemverilog
 {tb_text}
 ```
+
+### Provided Reference RTL (rtl_golden.sv)
+```systemverilog
+{rtl_text}
+```
+
+Return only the final specification in Markdown. Do not include code.
+"""
+
+USER_RTL_PROMPT_TEMPLATE = """
+Please write a **specification document** for a module to be designed, based on the behavior
+you can infer from the following reference RTL. The spec must not reveal
+implementation details from the reference RTL; treat it only as a hint to understand intent.
+
+Target module name: {target_name}
+
+### Short exemplar spec (style only)
+```
+{example_spec}
+```
+
+### Your task
+- Produce a more detailed, production-quality spec than the exemplar.
+- Include an interface list with directions, widths, reset polarities, and timing.
+- Clearly describe protocols (valid/ready, AXI(-Lite), req/rsp, etc.).
+- Clarify configuration parameters & constraints visible at the interface.
+- Define behavior on reset, backpressure, invalid/exceptional inputs.
+- Avoid micro-architectural/implementation-specific guidance.
 
 ### Provided Reference RTL (rtl_golden.sv)
 ```systemverilog
@@ -139,11 +167,137 @@ def _soft_trim(counter: TokenCounter, parts: List[Tuple[str,int]], budget: int) 
         ss[i]=ss[i][:cut]; cnts[i]=counter.count(ss[i])
     return ss
 
+# -------------------- JSON spec generation --------------------
+JSON_SYSTEM_PROMPT = """You are an expert RTL interface summarizer. Your task
+is to read a SystemVerilog source file and output a STRICT JSON object ONLY
+(no markdown, no backticks, no prose) for the module whose name is provided
+in the user message. You must extract ONLY that module and ignore any others.
+
+Do not include implementation internals (FSM encodings, internal signals, pragmas).
+Output VALID JSON only. No comments. No trailing commas. Use basic types only.
+
+JSON schema (exact keys):
+\{
+  "module_name": "<string>",
+  "parameters": [
+    \{
+      "name": "<string>",
+      "type": "<string or null>",
+      "default": "<string or null>"
+    \}
+  ],
+  "ports": [
+    \{
+      "name": "<string>",
+      "direction": "input" | "output" | "inout",
+      "width": "<string>",
+      "signed": true | false
+    \}
+  ],
+  "description": \{
+    "function": "<string>",
+    "protocols": "<string>"
+  \},
+  "keywords": ["<string>", "..."]
+\}
+"""
+
+def _build_json_user_prompt_for_named_top(rtl_text: str, top_module_name: str) -> str:
+    return f"""
+Target top module name: {top_module_name}
+
+Extract ONLY the module with this exact name from the SystemVerilog text below.
+Ignore any other modules.
+
+Return a single JSON object following the exact schema described by the system message.
+
+SystemVerilog file content starts below delimited by ===SV===
+===SV===
+{rtl_text}
+===SV===
+"""
+
+def _validate_and_optionally_fix_json_with_llm(history: List[ChatMessage],
+                                               llm,
+                                               max_trials: int = 3) -> Dict[str, Any]:
+    local_tc = TokenCounter(llm)
+    local_tc.set_cur_tag("RTL_JSON_Spec")
+    response = None
+    for _ in range(max_trials):
+        response, _cnt = local_tc.count_chat(history, llm=llm)
+        raw = (response.message.content or "").strip()
+        try:
+            return json.loads(raw, strict=False)
+        except json.decoder.JSONDecodeError as e:
+            err = ChatMessage(
+                role=MessageRole.USER,
+                content=f"Json Decode Error: {str(e)}\\n"
+                        f"Please return ONLY valid JSON per the schema. "
+                        f"No prose, no backticks, no comments."
+            )
+            history.extend([response.message, err])
+    raise ValueError(f"Json Decode Error when decoding: {response.message.content if response else '(no response)'}")
+
+def generate_rtl_json_spec(llm,
+                           rtl_path: str,
+                           rtl_text: str,
+                           top_module_name: str,
+                           out_path: Optional[str] = None,
+                           max_trials: int = 3) -> str:
+    sys_msg = ChatMessage(role=MessageRole.SYSTEM, content=JSON_SYSTEM_PROMPT)
+    user_msg = ChatMessage(role=MessageRole.USER,
+                           content=_build_json_user_prompt_for_named_top(rtl_text, top_module_name))
+    history: List[ChatMessage] = [sys_msg, user_msg]
+    json_obj = _validate_and_optionally_fix_json_with_llm(history, llm, max_trials=max_trials)
+
+    pattern = re.compile(
+        rf"\bmodule\s+{re.escape(top_module_name)}\b[\s\S]*?\bendmodule\b",
+        re.MULTILINE
+    )
+    match = pattern.search(rtl_text)
+    if match:
+        reuse_code = match.group(0)
+    else:
+        logger.warning(f"Top module {top_module_name} not found in RTL text; using full RTL for reuse.")
+        reuse_code = rtl_text
+
+    content_entry = {
+        "consult": rtl_text,   # full file
+        "reuse": reuse_code    # only top module
+    }
+
+    if isinstance(json_obj, dict):
+        if "keywords" in json_obj:
+            reordered = {}
+            for k, v in json_obj.items():
+                reordered[k] = v
+                if k == "keywords":
+                    reordered["content"] = content_entry
+            json_obj = reordered
+        else:
+            json_obj["content"] = content_entry
+    else:
+        # Fallback: ensure we still emit a dict with the RTL source
+        json_obj = {
+            "extracted": json_obj,
+            "content": content_entry,
+        }
+
+    if out_path is None:
+        base_dir = os.path.dirname(os.path.abspath(rtl_path))
+        base_name = os.path.splitext(os.path.basename(rtl_path))[0]
+        out_path = os.path.join(base_dir, f"{base_name}.module.json")
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(json_obj, f, indent=2)
+
+    return out_path
+
 def main():
     ap = argparse.ArgumentParser(description="Generate a spec (Markdown) from tb.sv + rtl_golden.sv via LLM, no implementation leakage.")
-    ap.add_argument("--tb", required=True, help="Path to the testbench file (SystemVerilog)")
+    ap.add_argument("--tb", required=False, default="", help="Path to the testbench file (SystemVerilog). Optional, use empty string or omit arg to disable.")
     ap.add_argument("--rtl", required=True, help="Path to the reference RTL file (SystemVerilog)")
-    ap.add_argument("--name", required=True, help="Target module name for the spec")
+    ap.add_argument("--top", required=True, help="Explicit top-level module name (in RTL) for JSON extraction")
     ap.add_argument("--out", default="spec.md", help="Output filename (default: spec.md)")
     ap.add_argument("--provider", default="openai", help="LLM provider (e.g. openai, anthropic, vertex, etc.)")
     ap.add_argument("--model", default="gpt-4o-2024-08-06", help="LLM model name")
@@ -155,42 +309,71 @@ def main():
     ap.add_argument("--tag", default="spec_gen", help="Tag for token counter logging")
     args = ap.parse_args()
 
-    if not os.path.isfile(args.tb) or not os.path.isfile(args.rtl):
-        print("Input files not found.", file=sys.stderr); sys.exit(1)
+    if not os.path.isfile(args.rtl):
+        print("RTL file not found.", file=sys.stderr); sys.exit(1)
+    if args.tb and not os.path.isfile(args.tb):
+        logger.warning(f"Testbench not found at {args.tb}; proceeding without TB.")
+        args.tb = ""
 
-    # LLM selection via your gen_config
     set_exp_setting(temperature=args.temperature, top_p=args.top_p)
     llm = get_llm(model=args.model, cfg_path=args.key_cfg_path, max_token=args.max_token,
                   provider=args.provider, temperature=args.temperature)
 
     tc = TokenCounter(llm); tc.set_cur_tag(args.tag)
-    tb_txt, rtl_txt = _read(args.tb), _read(args.rtl)
-
+    tb_txt = _read(args.tb) if args.tb else ""
+    rtl_txt = _read(args.rtl)
+    
     sys_msg = ChatMessage(role=MessageRole.SYSTEM, content=SYSTEM_PROMPT)
-    user_raw = USER_PROMPT_TEMPLATE.format(target_name=args.name, example_spec=EXAMPLE_SPEC,
-                                           tb_text="{TB_PLACEHOLDER}", rtl_text="{RTL_PLACEHOLDER}")
-    static = user_raw.replace("{TB_PLACEHOLDER}","").replace("{RTL_PLACEHOLDER}","")
-    # budget: keep ~3k for prompt+example; split rest 60/40 TB/RTL
-    reserve=3000; rem=max(args.tokens-reserve,2000); tb_share=int(rem*0.6); rtl_share=rem-tb_share
-    trimmed = _soft_trim(tc, [(static,2000),(tb_txt,tb_share),(rtl_txt,rtl_share)], args.tokens)
-    user_final = user_raw.replace("{TB_PLACEHOLDER}", trimmed[1]).replace("{RTL_PLACEHOLDER}", trimmed[2])
-    user_msg = ChatMessage(role=MessageRole.USER, content=user_final)
+    
+    if tb_txt:
+        user_raw = USER_RTL_TB_PROMPT_TEMPLATE.format(
+            target_name=args.top, example_spec=EXAMPLE_SPEC,
+            tb_text="{{TB_PLACEHOLDER}}", rtl_text="{{RTL_PLACEHOLDER}}"
+        )
+        static = user_raw.replace("{{TB_PLACEHOLDER}}", "").replace("{{RTL_PLACEHOLDER}}", "")
+        reserve = 3000
+        rem = max(args.tokens - reserve, 2000)
+        tb_share = int(rem * 0.6)
+        rtl_share = rem - tb_share
+        trimmed = _soft_trim(tc, [(static, 2000), (tb_txt, tb_share), (rtl_txt, rtl_share)], args.tokens)
+        user_final = user_raw.replace("{{TB_PLACEHOLDER}}", trimmed[1]).replace("{{RTL_PLACEHOLDER}}", trimmed[2])
+    else:
+        user_raw = USER_RTL_PROMPT_TEMPLATE.format(
+        target_name=args.top, example_spec=EXAMPLE_SPEC,
+        rtl_text="{{RTL_PLACEHOLDER}}"    
+        )
+        static = user_raw.replace("{{RTL_PLACEHOLDER}}", "")
+        reserve = 3000
+        rem = max(args.tokens - reserve, 2000)
+        trimmed = _soft_trim(tc, [(static, 2000), (rtl_txt, rem)], args.tokens)
+        user_final = user_raw.replace("{{RTL_PLACEHOLDER}}", trimmed[1])
 
+    user_msg = ChatMessage(role=MessageRole.USER, content=user_final)
     resp, cnt = tc.count_chat([sys_msg, user_msg], llm=llm)
     spec_md = (resp.message.content or "").strip()
     try: spec_md = reformat_json_string(spec_md)
     except Exception: pass
 
-    # Decide output paths
-    out_md = args.out if args.out.lower().endswith(".md") else f"{os.path.splitext(args.out)[0]}.md"
-    out_txt = f"{os.path.splitext(out_md)[0]}.txt"
+    out_dir = os.path.dirname(os.path.abspath(args.out)) or "."
+    os.makedirs(out_dir, exist_ok=True)
+    base = os.path.splitext(os.path.basename(args.out))[0]
+    out_md = os.path.join(out_dir, base + ".md")
+    out_txt = os.path.join(out_dir, base + ".txt")
+    out_json = os.path.join(out_dir, base + ".json")
 
-    with open(args.out,"w",encoding="utf-8") as f:
+    with open(out_md, "w", encoding="utf-8") as f:
         f.write(spec_md + ("" if spec_md.endswith("\n") else "\n"))
-
     spec_txt = md_to_txt(spec_md)
-    with open(out_txt,"w",encoding="utf-8") as f:
+    with open(out_txt, "w", encoding="utf-8") as f:
         f.write(spec_txt + ("" if spec_txt.endswith("\n") else "\n"))
+
+    json_out_path = generate_rtl_json_spec(
+        llm=llm,
+        rtl_path=args.rtl,
+        rtl_text=rtl_txt,
+        top_module_name=args.top,
+        out_path=out_json
+    )
 
     stats = {"model": llm.metadata.model_name, "provider": args.provider,
              "in_tokens": cnt.in_token_cnt, "out_tokens": cnt.out_token_cnt}
@@ -202,9 +385,8 @@ def main():
     with open(os.path.splitext(args.out)[0]+".usage.json","w",encoding="utf-8") as f:
         json.dump(stats,f,indent=2)
 
-    logger.info(f"Wrote spec: {args.out}")
     logger.info(f"Usage: in {cnt.in_token_cnt} tokens, out {cnt.out_token_cnt} tokens")
-    if "estimated_usd" in stats: logger.info(f"Estimated cost: ${stats['estimated_usd']:.4f}")
+    if "estimated_usd" in stats: logger.info(f"Estimated cost: \${stats['estimated_usd']:.4f}")
 
 if __name__ == "__main__":
     main()

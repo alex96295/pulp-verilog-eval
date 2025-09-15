@@ -1,0 +1,86 @@
+Specification Document for fifo_v3 Module
+
+1. Overview & Assumptions
+
+The fifo_v3 module is a parameterizable FIFO (First In, First Out) queue designed to manage data flow in digital systems. It supports configurable data width and depth, and can operate in a fall-through mode where new data immediately appears on the output if the FIFO is empty. The module is suitable for use in various digital applications where buffering and ordered data handling are required.
+
+Assumptions:
+- The FIFO depth is greater than zero.
+- The FIFO operates synchronously with respect to the provided clock.
+- The module supports both normal and test modes, with the ability to flush the queue.
+- It is assumed that the clock gating mechanism can be bypassed in test mode.
+
+2. Interface
+
+Signals
+
+- Clock and Reset:
+  - clk_i: Input, 1 bit, rising edge triggered. Main clock signal.
+  - rst_ni: Input, 1 bit, active low. Asynchronous reset signal.
+
+- Control Inputs:
+  - flush_i: Input, 1 bit, active high. Clears the FIFO when asserted.
+  - testmode_i: Input, 1 bit. Bypasses clock gating when asserted.
+
+- Data Interface:
+  - data_i: Input, DATA_WIDTH bits. Data to be pushed into the FIFO.
+  - push_i: Input, 1 bit, active high. Indicates valid data to be pushed.
+  - data_o: Output, DATA_WIDTH bits. Data output from the FIFO.
+  - pop_i: Input, 1 bit, active high. Requests data to be popped from the FIFO.
+
+- Status Flags:
+  - full_o: Output, 1 bit, active high. Indicates the FIFO is full.
+  - empty_o: Output, 1 bit, active high. Indicates the FIFO is empty.
+  - usage_o: Output, ADDR_DEPTH bits. Current fill level of the FIFO.
+
+Parameters
+
+- FALL_THROUGH: Boolean, default is 0. Enables fall-through mode if set.
+- DATA_WIDTH: Integer, default is 32. Specifies the width of the data.
+- DEPTH: Integer, default is 8. Specifies the depth of the FIFO.
+- dtype: Specifies the data type, default is logic [DATA_WIDTH-1:0].
+
+3. Protocols/Handshakes
+
+The FIFO uses a simple push/pop protocol:
+- Push Protocol: Data is pushed into the FIFO when push_i is asserted, provided the FIFO is not full (full_o is low).
+- Pop Protocol: Data is popped from the FIFO when pop_i is asserted, provided the FIFO is not empty (empty_o is low).
+
+No AXI or other complex protocols are utilized.
+
+4. Behavioral Requirements
+
+- Reset Behavior: Asserting rst_ni (active low) resets all internal state, pointers, and memory to zero.
+- Flush Behavior: Asserting flush_i clears the FIFO, resetting pointers and usage count but does not affect the reset state.
+- Backpressure: The module manages backpressure through full_o and empty_o signals, preventing overrun and underrun.
+- Fall-through Mode: When enabled and the FIFO is empty, data input (data_i) directly appears on the output (data_o) if push_i is asserted.
+- Error Handling: Pushing data when the FIFO is full or popping data when empty is prohibited and signaled through full_o and empty_o.
+
+5. Configuration Parameters
+
+- FALL_THROUGH: Boolean flag enabling pass-through operation.
+- DATA_WIDTH: The width of the data in bits, configurable up to the system's limit.
+- DEPTH: The depth of the FIFO, configurable from 1 to 2^32.
+
+6. Throughput/Latency Expectations
+
+- Throughput: Up to one data element per clock cycle can be pushed or popped when the FIFO is not full or empty, respectively.
+- Latency: In normal mode, the latency for data to appear at the output after a push is one clock cycle. In fall-through mode, latency is zero when the FIFO is empty.
+
+7. Clocking/Reset Domains and Constraints
+
+- Clock Domain: The entire module operates within a single clock domain defined by clk_i.
+- Reset Domain: The asynchronous reset is active low and affects the entire module.
+
+8. Example Timing/Truth Tables
+
+Truth Table for Push/Pop Operations
+
+  push_i   pop_i   full_o   empty_o   Operation                 
+ ---------- --------- ---------- ----------- -------------------------- 
+  0          0         X          X           No operation              
+  1          0         0          X           Push data to FIFO         
+  0          1         X          0           Pop data from FIFO        
+  1          1         0          0           Simultaneous push and pop 
+
+This specification provides a detailed guide to the expected behavior and interface of the fifo_v3 module, ensuring clear understanding for design and verification without revealing internal implementation details.
