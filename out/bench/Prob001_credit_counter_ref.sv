@@ -1,4 +1,4 @@
-// Compiled by morty-0.9.0 / 2025-09-15 15:58:54.510554246 +02:00:00
+// Compiled by morty-0.9.0 / 2025-09-16 17:34:16.39719893 +02:00:00
 
 // Copyright 2020 ETH Zurich and University of Bologna.
 // Solderpad Hardware License, Version 0.51, see LICENSE for details.
@@ -282,7 +282,7 @@
  // COMMON_CELLS_ASSERTIONS_SVH
 
 
-module credit_counter #(
+module TopModule #(
   parameter int unsigned NumCredits      = 0,
   /// Whether credit is full or empty on reset
   parameter bit          InitCreditEmpty = 1'b0,
@@ -337,13 +337,13 @@ module credit_counter #(
 
   CreditUnderflow: assert property (@(posedge clk_i) disable iff ((!rst_ni) !== '0) not (credit_o == '0 && decrement))                      
     else begin                                                                                              
-      $error("[ASSERT FAILED] [%m] %s: %s (%s:%0d)", "CreditUnderflow", "", "/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/credit_counter.sv", 5); 
+      $error("[ASSERT FAILED] [%m] %s: %s (%s:%0d)", "CreditUnderflow", "", "/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/TopModule.sv", 5); 
                                                         
     end                                                                                                     
 
   CreditOverflow: assert property (@(posedge clk_i) disable iff ((!rst_ni) !== '0) not (credit_o == NumCredits && increment))                      
     else begin                                                                                              
-      $error("[ASSERT FAILED] [%m] %s: %s (%s:%0d)", "CreditOverflow", "", "/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/credit_counter.sv", 5); 
+      $error("[ASSERT FAILED] [%m] %s: %s (%s:%0d)", "CreditOverflow", "", "/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/TopModule.sv", 5); 
                                                         
     end                                                                                                     
 
