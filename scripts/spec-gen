@@ -143,6 +143,116 @@ to call the module. In the remainder, you describe what the module does
 (specifications), and when you refer to it, you always call it "TopModule".
 """
 
+JSON_SYSTEM_PROMPT = """You are an expert RTL interface summarizer.
+Your task is to read a SystemVerilog source file and output a STRICT JSON object ONLY
+(no markdown, no backticks, no prose) for the module whose name is provided
+in the user message. You must extract ONLY that module and ignore any others.
+
+Do not include implementation internals (FSM encodings, internal signals, pragmas).
+Output VALID JSON only. No comments. No trailing commas. Use basic types only.
+
+JSON schema (exact keys):
+{
+  "module_name": "<string>",
+  "parameters": [
+    {
+      "name": "<string>",
+      "type": "<string or null>",
+      "default": "<string or null>"
+    }
+  ],
+  "ports": [
+    {
+      "name": "<string>",
+      "type": "logic" | "wire" | null,
+      "direction": "input" | "output" | "inout",
+      "signed": true | false,
+      "type_ref": "<string or null>",
+      "modport": "<string or null>",
+      "packed_dims": [
+        { "msb": "<string>", "lsb": "<string>" }
+      ],
+      "unpacked_dims": [
+        { "size": "<string>" }
+        or { "msb": "<string>", "lsb": "<string>" }
+      ]
+    }
+  ],
+  "description": {
+    "function": "<string>",
+    "protocols": "<string>"
+  },
+  "keywords": ["<string>", "..."]
+}
+
+[RULES]
+
+1) Module selection
+- Extract only the module whose name exactly matches the user-provided module name (case-sensitive).
+- Ignore other modules, interfaces, packages, and all implementation internals.
+
+2) Parameters
+- Include both value parameters (`parameter`) and type parameters (`parameter type`) from the module header. Include `localparam` only if it appears in the ANSI header list.
+- For value parameters:
+  - "name": identifier.
+  - "type": textual declared type if present (e.g., "int unsigned", "logic [7:0]"), else null.
+  - "default": exact textual default expression, else null.
+- For type parameters (`parameter type T = ...`):
+  - "name": identifier of the type parameter.
+  - "type": the literal string "type".
+  - "default": default type text (e.g., "logic [7:0]") or null if unspecified.
+- Preserve declaration order as written in the header.
+
+3) Ports
+- Use ANSI-style information from the module header; if non-ANSI is used, merge direction/type/dims from subsequent declarations.
+- Split multi-declarators into separate entries (e.g., `input logic a, b;` ? two port objects).
+- "name": port identifier.
+- "direction": "input" | "output" | "inout" exactly as declared.
+- Determine kind vs reference:
+  - If declared with a built-in/net/var type, set "type" to "logic" (default for variables/unspecified/var/logic/reg) or "wire" (for explicit net types like wire/tri/uwire). Set "type_ref": null, "modport": null.
+  - If an interface instance: set "type": null, "type_ref" = interface name, "modport" = modport name or null.
+  - If a typedef is used (e.g., `my_t p`): set "type": null, "type_ref": "my_t", "modport": null.
+- "signed": true only if the declaration includes `signed`; false otherwise (applies to the packed element type).
+- Dimensions (verbatim, outermost?innermost):
+  - "packed_dims": one object per packed slice next to the type, each as { "msb": "<expr>", "lsb": "<expr>" }.
+  - "unpacked_dims": one object per dimension after the identifier; use { "size": "<expr>" } for `[N]` or { "msb": "<expr>", "lsb": "<expr>" } for `[M:L]`.
+- If no dimensions, both arrays are [].
+- Preserve port order.
+
+4) Text fidelity
+- Keep expressions verbatim strings; do not evaluate or simplify. Minimal whitespace normalization only (trim ends).
+
+5) Disambiguation
+- If kind is omitted in an input/output/inout declaration and it is variable-like, choose "logic".
+- If an explicit net type is used, choose "wire".
+- For interfaces, never place ranges in "packed_dims"; only "unpacked_dims" are allowed after the instance name.
+- If a typedef appears with ranges:
+  - If written as `my_t [N-1:0] p`, record "type_ref": "my_t" and put `[N-1:0]` into "packed_dims".
+  - If written as `my_t p [N]`, record "type_ref": "my_t" and put `[N]` into "unpacked_dims".
+
+6) Description and keywords
+- "description.function": one concise sentence summarizing the module's purpose (from comments or reasonable inference).
+- "description.protocols": comma-separated protocol/bus names mentioned (e.g., "AXI4-Stream, APB"), or empty string.
+- "keywords": short, relevant terms (module role, buses, handshake signals). No duplicates.
+
+7) Output format
+- Output a single JSON object conforming exactly to the schema above.
+- No markdown, no backticks, no comments, no trailing commas.
+"""
+
+def _build_json_user_prompt_for_named_top(rtl_text: str, top_module_name: str) -> str:
+    return f"""
+Target top module name: {top_module_name}
+
+Extract ONLY the module with this exact name from the SystemVerilog text below.
+Ignore any other modules.
+
+Return a single JSON object following the exact schema described by the system message.
+
+SystemVerilog file content starts below delimited by ===SV===
+===SV===
+{rtl_text}
+===SV===
 """
 
 def md_to_txt(md: str) -> str:
@@ -190,56 +300,6 @@ def _soft_trim(counter: TokenCounter, parts: List[Tuple[str,int]], budget: int) 
         cut=max(1,int(len(ss[i])*ratio))
         ss[i]=ss[i][:cut]; cnts[i]=counter.count(ss[i])
     return ss
-
-# -------------------- JSON spec generation --------------------
-JSON_SYSTEM_PROMPT = """You are an expert RTL interface summarizer. Your task
-is to read a SystemVerilog source file and output a STRICT JSON object ONLY
-(no markdown, no backticks, no prose) for the module whose name is provided
-in the user message. You must extract ONLY that module and ignore any others.
-
-Do not include implementation internals (FSM encodings, internal signals, pragmas).
-Output VALID JSON only. No comments. No trailing commas. Use basic types only.
-
-JSON schema (exact keys):
-\{
-  "module_name": "<string>",
-  "parameters": [
-    \{
-      "name": "<string>",
-      "type": "<string or null>",
-      "default": "<string or null>"
-    \}
-  ],
-  "ports": [
-    \{
-      "name": "<string>",
-      "direction": "input" | "output" | "inout",
-      "width": "<string>",
-      "signed": true | false
-    \}
-  ],
-  "description": \{
-    "function": "<string>",
-    "protocols": "<string>"
-  \},
-  "keywords": ["<string>", "..."]
-\}
-"""
-
-def _build_json_user_prompt_for_named_top(rtl_text: str, top_module_name: str) -> str:
-    return f"""
-Target top module name: {top_module_name}
-
-Extract ONLY the module with this exact name from the SystemVerilog text below.
-Ignore any other modules.
-
-Return a single JSON object following the exact schema described by the system message.
-
-SystemVerilog file content starts below delimited by ===SV===
-===SV===
-{rtl_text}
-===SV===
-"""
 
 def _validate_and_optionally_fix_json_with_llm(history: List[ChatMessage],
                                                llm,
