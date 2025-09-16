@@ -386,6 +386,7 @@ def main():
 
     # Derive output suffix from targets and build filenames
     targets = args.target or ["rtl"]
+    has_rtl = any(t.lower() == "rtl" for t in targets)
     suffix = derive_suffix(targets)
     full_json=f"{out}.{suffix}.full.json"
     trimmed_json=f"{out}.{suffix}.json"
@@ -396,24 +397,37 @@ def main():
         with open(full_json,"w",encoding="utf-8") as o:
             subprocess.run(build_bender_cmd(targets),check=True,stdout=o)
 
-    # Build start set: selected top(s) at chosen level + optional TB roots
-    starts=[]
-    for p,l in tops:
-        if l==sel_level:
-            ap=main_repo.resolve(p)
-            if ap: starts.append((0,ap,l))
+    # Build start set: selected top(s) at chosen level (only if -t rtl
+    # present) + optional TB roots
+    starts = []
+
+    # Only seed RTL top when user requested the rtl target
+    if has_rtl:
+        for p, l in tops:
+            if l == sel_level:
+                ap = main_repo.resolve(p)
+                if ap:
+                    starts.append((0, ap, l))
 
     tb_roots = select_tb_roots(repos, args.tb_token)
     if tb_roots:
         # Map abs path -> (repo index, level)
-        abs2lvl={}
-        for i,r in enumerate(repos):
-            for rel,l in r.levels_map.items():
-                ap=r.resolve(rel)
-                if ap: abs2lvl[ap]=(i,l)
+        abs2lvl = {}
+        for i, r in enumerate(repos):
+            for rel, l in r.levels_map.items():
+                ap = r.resolve(rel)
+                if ap:
+                    abs2lvl[ap] = (i, l)
         for apth in tb_roots:
-            ri,l = abs2lvl.get(apth,(0,0))
-            starts.append((ri,apth,l))
+            ri, l = abs2lvl.get(apth, (0, 0))
+            starts.append((ri, apth, l))
+
+    # If no starts at all, bail out with a helpful hint
+    if not starts:
+        print("[ERROR] No start points selected. You omitted -t rtl, so the RTL top wasn't seeded.\n"
+              "Provide --tb-token to seed testbenches (e.g., --tb-token my_top_tb or --tb-token 'axi_*_tb'),\n"
+              "or include -t rtl if you do want the RTL top included.", file=sys.stderr)
+        sys.exit(1)
 
     # Traverse and trim
     used_set, dep_tree = collect_used_set(repos, starts)
