@@ -61,7 +61,7 @@ Use the RTL only to infer intent and external requirements. Output Markdown only
 """
 
 USER_RTL_TB_PROMPT_TEMPLATE = """
-Please write a **specification document** for a module to be designed, based on the behavior
+Write a **specification document** for a module to be designed, based on the behavior
 you can infer from the following testbench and the reference RTL. The spec must not reveal
 implementation details from the reference RTL; treat it only as a hint to understand intent.
 
@@ -79,22 +79,33 @@ Target module name: {target_name}
 - Clarify configuration parameters & constraints visible at the interface.
 - Define behavior on reset, backpressure, invalid/exceptional inputs.
 - Avoid micro-architectural/implementation-specific guidance.
+- Do not include a title for the specification document.
 
-### Provided Testbench (tb.sv)
+### Provided Testbench
 ```systemverilog
 {tb_text}
 ```
 
-### Provided Reference RTL (rtl_golden.sv)
+### Provided Reference RTL
 ```systemverilog
 {rtl_text}
 ```
 
 Return only the final specification in Markdown. Do not include code.
+
+[NAMING CONVENTION]
+
+1. In the specification you generate, you must name the top level to be
+designed "TopModule". So never mention the specific name of the module you read
+from the reference RTL.
+2. Always introduce the spec with "Design a module called TopModule. This
+module [...]". This way, the RTL designer (human or AI-based) knows exactly how
+to call the module. In the remainder, you describe what the module does
+(specifications), and when you refer to it, you always call it "TopModule".
 """
 
 USER_RTL_PROMPT_TEMPLATE = """
-Please write a **specification document** for a module to be designed, based on the behavior
+Write a **specification document** for a module to be designed, based on the behavior
 you can infer from the following reference RTL. The spec must not reveal
 implementation details from the reference RTL; treat it only as a hint to understand intent.
 
@@ -112,13 +123,26 @@ Target module name: {target_name}
 - Clarify configuration parameters & constraints visible at the interface.
 - Define behavior on reset, backpressure, invalid/exceptional inputs.
 - Avoid micro-architectural/implementation-specific guidance.
+- Do not include a title for the specification document.
 
-### Provided Reference RTL (rtl_golden.sv)
+### Provided Reference RTL
 ```systemverilog
 {rtl_text}
 ```
 
 Return only the final specification in Markdown. Do not include code.
+
+[NAMING CONVENTION]
+
+1. In the specification you generate, you must name the top level to be
+designed "TopModule". So never mention the specific name of the module you read
+from the reference RTL.
+2. Always introduce the spec with "Design a module called TopModule. This
+module [...]". This way, the RTL designer (human or AI-based) knows exactly how
+to call the module. In the remainder, you describe what the module does
+(specifications), and when you refer to it, you always call it "TopModule".
+"""
+
 """
 
 def md_to_txt(md: str) -> str:
