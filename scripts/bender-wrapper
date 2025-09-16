@@ -8,7 +8,6 @@ try:
 except ImportError:
     print("Please install PyYAML: pip install pyyaml", file=sys.stderr); sys.exit(1)
 
-# -------- Regexes --------
 LEVEL_RE = re.compile(r"#\s*Level\s+(\d+)\b", re.I)
 FILE_ITEM_RE = re.compile(r"^\s*-\s+([^\s#]+)\s*$")
 FILES_KEY_RE = re.compile(r"^\s*files\s*:\s*$", re.I)
@@ -24,14 +23,12 @@ SV_INSTANTIATION_RE = re.compile(r"""
 """, re.M|re.S|re.X)
 EXCLUDE_BEFORE_RE = re.compile(r"\b(module|macromodule|primitive|interface|class|package|program|checker|function|task|typedef|struct|union|enum)\b")
 
-# -------- Small utils --------
 norm = lambda p: os.path.normpath(os.path.realpath(p))
 normalize_name = lambda s: re.sub(r"[_\-.]", "", s).lower()
 def is_tb(path:str)->bool:
     b=os.path.basename(path).lower()
     return path.startswith("test/") or b.endswith("_tb.sv") or b.endswith("_tb.v")
 
-# -------- YAML helpers --------
 def read_levels_from_bender_yaml_text(text:str)->Dict[str,int]:
     levels, in_src, cur = {}, False, 0
     for line in text.splitlines():
@@ -333,7 +330,6 @@ def trim_filelist(full_f:str, used_abs:Set[str], out_f:str):
     with open(out_f,"w",encoding="utf-8") as f:
         f.write("\n".join(kept)+("\n" if kept and not kept[-1].endswith("\n") else ""))
 
-# -------- Targets / suffix helpers --------
 def derive_suffix(targets: List[str]) -> str:
     ts=set(t.lower() for t in targets)
     has_rtl = "rtl" in ts
@@ -350,7 +346,6 @@ def build_bender_cmd(targets: List[str]) -> List[str]:
     cmd += ["--flatten"]
     return cmd
 
-# -------- Main --------
 def main():
     ap=argparse.ArgumentParser(
         description="Trim Bender --flatten JSON for chosen target(s); traverse real instantiations/imports/includes; output filtered JSON.",
@@ -358,10 +353,8 @@ def main():
     )
     ap.add_argument("--bender",default="Bender.yml", help="Path to main Bender.yml")
     ap.add_argument("--top",required=True, help="Top RTL module filename (e.g., my_top.sv)")
-    # New: targets are user-controlled (repeatable)
     ap.add_argument("-t","--target", action="append", default=[],
                     help="Bender target(s), repeatable (e.g., -t rtl -t test -t simulation)")
-    # New: single arg for TBs: list + wildcards, can be repeated or comma-separated
     ap.add_argument("--tb-token", action="append", default=[],
                     help="Testbench top stem(s). Supports wildcards (* ? [..]). "
                          "Pass multiple times or comma-separated. "
