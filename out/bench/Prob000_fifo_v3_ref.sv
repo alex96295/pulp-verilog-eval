@@ -1,4 +1,4 @@
-// Compiled by morty-0.9.0 / 2025-09-15 15:57:27.195123213 +02:00:00
+// Compiled by morty-0.9.0 / 2025-09-16 17:33:06.534271359 +02:00:00
 
 // Copyright 2018 ETH Zurich and University of Bologna.
 // Copyright and related rights are licensed under the Solderpad Hardware
@@ -129,7 +129,7 @@
  // COMMON_CELLS_ASSERTIONS_SVH
 
 
-module fifo_v3 #(
+module TopModule #(
     parameter bit          FALL_THROUGH = 1'b0, // fifo is in fall-through mode
     parameter int unsigned DATA_WIDTH   = 32,   // default data width if the fifo is of type logic
     parameter int unsigned DEPTH        = 8,    // depth can be arbitrary from 0 to 2**32
@@ -259,7 +259,7 @@ module fifo_v3 #(
 initial begin                                        
     depth_0: assert (DEPTH > 0)                            
       else begin                                       
-        $error("[ASSERT FAILED] [%m] %s: %s (%s:%0d)", "depth_0", "DEPTH must be greater than 0.", "/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv", 5); 
+        $error("[ASSERT FAILED] [%m] %s: %s (%s:%0d)", "depth_0", "DEPTH must be greater than 0.", "/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/TopModule.sv", 5); 
  
       end                                              
   end                                                  
@@ -267,17 +267,17 @@ initial begin
 
     full_write: assert property (@(posedge clk_i) disable iff ((!rst_ni) !== '0) (full_o |-> ~push_i))                    
     else begin                                                                                        
-      $error("[ASSERT FAILED] [%m] %s: %s (%s:%0d)", "full_write", "Trying to push new data although the FIFO is full.", "/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv", 5); 
+      $error("[ASSERT FAILED] [%m] %s: %s (%s:%0d)", "full_write", "Trying to push new data although the FIFO is full.", "/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/TopModule.sv", 5); 
                                                   
     end                                                                                               
 
 
     empty_read: assert property (@(posedge clk_i) disable iff ((!rst_ni) !== '0) (empty_o |-> ~pop_i))                    
     else begin                                                                                        
-      $error("[ASSERT FAILED] [%m] %s: %s (%s:%0d)", "empty_read", "Trying to pop data although the FIFO is empty.", "/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv", 5); 
+      $error("[ASSERT FAILED] [%m] %s: %s (%s:%0d)", "empty_read", "Trying to pop data although the FIFO is empty.", "/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/TopModule.sv", 5); 
                                                   
     end                                                                                               
 
 
 
-endmodule // fifo_v3
+endmodule // TopModule

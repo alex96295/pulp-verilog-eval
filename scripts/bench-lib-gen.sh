@@ -204,5 +204,31 @@ for line in "${LINES[@]}"; do
     [[ -n "$GEN_JSON" && -f "$GEN_JSON" ]] && run_cmd "mv \"$GEN_JSON\" \"$LIB_DIR/${TOP_NAME}.json\"" || log "WARNING: Could not find generated ${TOP_NAME}.json"
   fi
 
+  # Normalize module / TB identifiers across generated benchmarks. Replace the
+  # DUT module name ($TOP_NAME) with "TopModule" in all generated SVs. Replace
+  # the TB stem ($TB_STEM_VAL) with "TopTestbench" in test SVs (if present).
+  escape_re () { printf '%s' "$1" | sed -e 's/[.[\()*^$\\]/\\&/g'; }
+
+  TOP_NAME_RE="$(escape_re "$TOP_NAME")"
+  if [[ -f "$RTL_SV" ]]; then
+    run_cmd "perl -0777 -i -pe 's/\\b${TOP_NAME_RE}\\b/TopModule/g' \"$RTL_SV\""
+  fi
+  if [[ $TB_PRESENT -eq 1 ]]; then
+    if [[ -n "${TB_STEM_VAL:-}" ]]; then
+      TB_STEM_RE="$(escape_re "$TB_STEM_VAL")"
+      if [[ -f "$TB_SV" ]]; then
+        # First normalize DUT name, then TB name
+        run_cmd "perl -0777 -i -pe 's/\\b${TOP_NAME_RE}\\b/TopModule/g; s/\\b${TB_STEM_RE}\\b/TopTestbench/g' \"$TB_SV\""
+      fi
+      if [[ -f "$RTLTB_SV" ]]; then
+        run_cmd "perl -0777 -i -pe 's/\\b${TOP_NAME_RE}\\b/TopModule/g; s/\\b${TB_STEM_RE}\\b/TopTestbench/g' \"$RTLTB_SV\""
+      fi
+    else
+      # No TB stem provided; still normalize DUT in test files if they exist
+      [[ -f "$TB_SV" ]] && run_cmd "perl -0777 -i -pe 's/\\b${TOP_NAME_RE}\\b/TopModule/g' \"$TB_SV\""
+      [[ -f "$RTLTB_SV" ]] && run_cmd "perl -0777 -i -pe 's/\\b${TOP_NAME_RE}\\b/TopModule/g' \"$RTLTB_SV\""
+    fi
+  fi
+
   ((++idx))
 done

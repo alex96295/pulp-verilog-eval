@@ -30,86 +30,135 @@
   "ports": [
     {
       "name": "clk_i",
+      "type": "logic",
       "direction": "input",
-      "width": "1",
-      "signed": false
+      "signed": false,
+      "type_ref": null,
+      "modport": null,
+      "packed_dims": [],
+      "unpacked_dims": []
     },
     {
       "name": "rst_ni",
+      "type": "logic",
       "direction": "input",
-      "width": "1",
-      "signed": false
+      "signed": false,
+      "type_ref": null,
+      "modport": null,
+      "packed_dims": [],
+      "unpacked_dims": []
     },
     {
       "name": "flush_i",
+      "type": "logic",
       "direction": "input",
-      "width": "1",
-      "signed": false
+      "signed": false,
+      "type_ref": null,
+      "modport": null,
+      "packed_dims": [],
+      "unpacked_dims": []
     },
     {
       "name": "testmode_i",
+      "type": "logic",
       "direction": "input",
-      "width": "1",
-      "signed": false
+      "signed": false,
+      "type_ref": null,
+      "modport": null,
+      "packed_dims": [],
+      "unpacked_dims": []
     },
     {
       "name": "full_o",
+      "type": "logic",
       "direction": "output",
-      "width": "1",
-      "signed": false
+      "signed": false,
+      "type_ref": null,
+      "modport": null,
+      "packed_dims": [],
+      "unpacked_dims": []
     },
     {
       "name": "empty_o",
+      "type": "logic",
       "direction": "output",
-      "width": "1",
-      "signed": false
+      "signed": false,
+      "type_ref": null,
+      "modport": null,
+      "packed_dims": [],
+      "unpacked_dims": []
     },
     {
       "name": "usage_o",
+      "type": "logic",
       "direction": "output",
-      "width": "ADDR_DEPTH",
-      "signed": false
+      "signed": false,
+      "type_ref": null,
+      "modport": null,
+      "packed_dims": [
+        {
+          "msb": "ADDR_DEPTH-1",
+          "lsb": "0"
+        }
+      ],
+      "unpacked_dims": []
     },
     {
       "name": "data_i",
+      "type": null,
       "direction": "input",
-      "width": "DATA_WIDTH",
-      "signed": false
+      "signed": false,
+      "type_ref": "dtype",
+      "modport": null,
+      "packed_dims": [],
+      "unpacked_dims": []
     },
     {
       "name": "push_i",
+      "type": "logic",
       "direction": "input",
-      "width": "1",
-      "signed": false
+      "signed": false,
+      "type_ref": null,
+      "modport": null,
+      "packed_dims": [],
+      "unpacked_dims": []
     },
     {
       "name": "data_o",
+      "type": null,
       "direction": "output",
-      "width": "DATA_WIDTH",
-      "signed": false
+      "signed": false,
+      "type_ref": "dtype",
+      "modport": null,
+      "packed_dims": [],
+      "unpacked_dims": []
     },
     {
       "name": "pop_i",
+      "type": "logic",
       "direction": "input",
-      "width": "1",
-      "signed": false
+      "signed": false,
+      "type_ref": null,
+      "modport": null,
+      "packed_dims": [],
+      "unpacked_dims": []
     }
   ],
   "description": {
-    "function": "FIFO (First-In-First-Out) module with parameterizable data width and depth, supporting fall-through mode.",
-    "protocols": "Generic FIFO interface with push and pop operations."
+    "function": "A configurable FIFO module supporting fall-through mode.",
+    "protocols": ""
   },
   "keywords": [
     "FIFO",
-    "fall-through",
-    "parameterizable",
-    "clock",
-    "reset",
+    "queue",
+    "data",
     "push",
-    "pop"
+    "pop",
+    "full",
+    "empty"
   ],
   "content": {
-    "consult": "// Compiled by morty-0.9.0 / 2025-09-15 15:57:27.195123213 +02:00:00\n\n// Copyright 2018 ETH Zurich and University of Bologna.\n// Copyright and related rights are licensed under the Solderpad Hardware\n// License, Version 0.51 (the \"License\"); you may not use this file except in\n// compliance with the License. You may obtain a copy of the License at\n// http://solderpad.org/licenses/SHL-0.51. Unless required by applicable law\n// or agreed to in writing, software, hardware and materials distributed under\n// this License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR\n// CONDITIONS OF ANY KIND, either express or implied. See the License for the\n// specific language governing permissions and limitations under the License.\n\n// Author: Florian Zaruba <zarubaf@iis.ee.ethz.ch>\n\n// Copyright lowRISC contributors.\n// Licensed under the Apache License, Version 2.0, see LICENSE for details.\n// SPDX-License-Identifier: Apache-2.0\n\n// Macros and helper code for using assertions.\n//  - Provides default clk and rst options to simplify code\n//  - Provides boiler plate template for common assertions\n\n\n\n\n\n///////////////////\n// Helper macros //\n///////////////////\n\n// helper macro to reduce code clutter, can be used to hide signal defs only used for assertions\n\n\n   \n\n// forcefully enable assertions with ASSERTS_OVERRIDE_ON, overriding any define that turns them off\n\n\n// Converts an arbitrary block of code into a Verilog string\n\n\n// ASSERT_RPT is available to change the reporting mechanism when an assert fails\n\n\n\n///////////////////////////////////////\n// Simple assertion and cover macros //\n///////////////////////////////////////\n\n// Default clk and reset signals used by assertion macros below.\n\n\n\n// Immediate assertion\n// Note that immediate assertions are sensitive to simulation glitches.\n\n\n// Assertion in initial block. Can be used for things like parameter checking.\n\n\n// Assertion in final block. Can be used for things like queues being empty\n// at end of sim, all credits returned at end of sim, state machines in idle\n// at end of sim.\n\n\n// Assert a concurrent property directly.\n// It can be called as a module (or interface) body item.\n\n// Note: Above we use (__rst !== '0) in the disable iff statements instead of\n// (__rst == '1).  This properly disables the assertion in cases when reset is X at\n// the beginning of a simulation. For that case, (reset == '1) does not disable the\n// assertion.\n\n// Assert a concurrent property NEVER happens\n\n\n// Assert that signal has a known value (each bit is either '0' or '1') after reset.\n// It can be called as a module (or interface) body item.\n\n\n//  Cover a concurrent property\n\n\n//////////////////////////////\n// Complex assertion macros //\n//////////////////////////////\n\n// Assert that signal is an active-high pulse with pulse length of 1 clock cycle\n\n\n// Assert that a property is true only when an enable signal is set.  It can be called as a module\n// (or interface) body item.\n\n\n// Assert that signal has a known value (each bit is either '0' or '1') after reset if enable is\n// set.  It can be called as a module (or interface) body item.\n\n\n///////////////////////\n// Assumption macros //\n///////////////////////\n\n// Assume a concurrent property\n\n\n// Assume an immediate property\n\n\n//////////////////////////////////\n// For formal verification only //\n//////////////////////////////////\n\n// Note that the existing set of ASSERT macros specified above shall be used for FPV,\n// thereby ensuring that the assertions are evaluated during DV simulations as well.\n\n// ASSUME_FPV\n// Assume a concurrent property during formal verification only.\n\n\n// ASSUME_I_FPV\n// Assume a concurrent property during formal verification only.\n\n\n// COVER_FPV\n// Cover a concurrent property during formal verification\n\n\n\n // COMMON_CELLS_ASSERTIONS_SVH\n\n\nmodule fifo_v3 #(\n    parameter bit          FALL_THROUGH = 1'b0, // fifo is in fall-through mode\n    parameter int unsigned DATA_WIDTH   = 32,   // default data width if the fifo is of type logic\n    parameter int unsigned DEPTH        = 8,    // depth can be arbitrary from 0 to 2**32\n    parameter type dtype                = logic [DATA_WIDTH-1:0],\n    // DO NOT OVERWRITE THIS PARAMETER\n    parameter int unsigned ADDR_DEPTH   = (DEPTH > 1) ? $clog2(DEPTH) : 1\n)(\n    input  logic  clk_i,            // Clock\n    input  logic  rst_ni,           // Asynchronous reset active low\n    input  logic  flush_i,          // flush the queue\n    input  logic  testmode_i,       // test_mode to bypass clock gating\n    // status flags\n    output logic  full_o,           // queue is full\n    output logic  empty_o,          // queue is empty\n    output logic  [ADDR_DEPTH-1:0] usage_o,  // fill pointer\n    // as long as the queue is not full we can push new data\n    input  dtype  data_i,           // data to push into the queue\n    input  logic  push_i,           // data is valid and can be pushed to the queue\n    // as long as the queue is not empty we can pop new elements\n    output dtype  data_o,           // output data\n    input  logic  pop_i             // pop head from queue\n);\n    // local parameter\n    // FIFO depth - handle the case of pass-through, synthesizer will do constant propagation\n    localparam int unsigned FifoDepth = (DEPTH > 0) ? DEPTH : 1;\n    // clock gating control\n    logic gate_clock;\n    // pointer to the read and write section of the queue\n    logic [ADDR_DEPTH - 1:0] read_pointer_n, read_pointer_q, write_pointer_n, write_pointer_q;\n    // keep a counter to keep track of the current queue status\n    // this integer will be truncated by the synthesis tool\n    logic [ADDR_DEPTH:0] status_cnt_n, status_cnt_q;\n    // actual memory\n    dtype [FifoDepth - 1:0] mem_n, mem_q;\n\n    assign usage_o = status_cnt_q[ADDR_DEPTH-1:0];\n\n    if (DEPTH == 0) begin : gen_pass_through\n        assign empty_o     = ~push_i;\n        assign full_o      = ~pop_i;\n    end else begin : gen_fifo\n        assign full_o       = (status_cnt_q == FifoDepth[ADDR_DEPTH:0]);\n        assign empty_o      = (status_cnt_q == 0) & ~(FALL_THROUGH & push_i);\n    end\n    // status flags\n\n    // read and write queue logic\n    always_comb begin : read_write_comb\n        // default assignment\n        read_pointer_n  = read_pointer_q;\n        write_pointer_n = write_pointer_q;\n        status_cnt_n    = status_cnt_q;\n        data_o          = (DEPTH == 0) ? data_i : mem_q[read_pointer_q];\n        mem_n           = mem_q;\n        gate_clock      = 1'b1;\n\n        // push a new element to the queue\n        if (push_i && ~full_o) begin\n            // push the data onto the queue\n            mem_n[write_pointer_q] = data_i;\n            // un-gate the clock, we want to write something\n            gate_clock = 1'b0;\n            // increment the write counter\n            // this is dead code when DEPTH is a power of two\n            if (write_pointer_q == FifoDepth[ADDR_DEPTH-1:0] - 1)\n                write_pointer_n = '0;\n            else\n                write_pointer_n = write_pointer_q + 1;\n            // increment the overall counter\n            status_cnt_n    = status_cnt_q + 1;\n        end\n\n        if (pop_i && ~empty_o) begin\n            // read from the queue is a default assignment\n            // but increment the read pointer...\n            // this is dead code when DEPTH is a power of two\n            if (read_pointer_n == FifoDepth[ADDR_DEPTH-1:0] - 1)\n                read_pointer_n = '0;\n            else\n                read_pointer_n = read_pointer_q + 1;\n            // ... and decrement the overall count\n            status_cnt_n   = status_cnt_q - 1;\n        end\n\n        // keep the count pointer stable if we push and pop at the same time\n        if (push_i && pop_i &&  ~full_o && ~empty_o)\n            status_cnt_n   = status_cnt_q;\n\n        // FIFO is in pass through mode -> do not change the pointers\n        if (FALL_THROUGH && (status_cnt_q == 0) && push_i) begin\n            data_o = data_i;\n            if (pop_i) begin\n                status_cnt_n = status_cnt_q;\n                read_pointer_n = read_pointer_q;\n                write_pointer_n = write_pointer_q;\n            end\n        end\n    end\n\n    // sequential process\n    always_ff @(posedge clk_i or negedge rst_ni) begin\n        if(~rst_ni) begin\n            read_pointer_q  <= '0;\n            write_pointer_q <= '0;\n            status_cnt_q    <= '0;\n        end else begin\n            if (flush_i) begin\n                read_pointer_q  <= '0;\n                write_pointer_q <= '0;\n                status_cnt_q    <= '0;\n             end else begin\n                read_pointer_q  <= read_pointer_n;\n                write_pointer_q <= write_pointer_n;\n                status_cnt_q    <= status_cnt_n;\n            end\n        end\n    end\n\n    always_ff @(posedge clk_i or negedge rst_ni) begin\n        if(~rst_ni) begin\n            mem_q <= {FifoDepth{dtype'('0)}};\n        end else if (!gate_clock) begin\n            mem_q <= mem_n;\n        end\n    end\n\ninitial begin                                        \n    depth_0: assert (DEPTH > 0)                            \n      else begin                                       \n        $error(\"[ASSERT FAILED] [%m] %s: %s (%s:%0d)\", \"depth_0\", \"DEPTH must be greater than 0.\", \"/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv\", 5); \n \n      end                                              \n  end                                                  \n\n\n    full_write: assert property (@(posedge clk_i) disable iff ((!rst_ni) !== '0) (full_o |-> ~push_i))                    \n    else begin                                                                                        \n      $error(\"[ASSERT FAILED] [%m] %s: %s (%s:%0d)\", \"full_write\", \"Trying to push new data although the FIFO is full.\", \"/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv\", 5); \n                                                  \n    end                                                                                               \n\n\n    empty_read: assert property (@(posedge clk_i) disable iff ((!rst_ni) !== '0) (empty_o |-> ~pop_i))                    \n    else begin                                                                                        \n      $error(\"[ASSERT FAILED] [%m] %s: %s (%s:%0d)\", \"empty_read\", \"Trying to pop data although the FIFO is empty.\", \"/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv\", 5); \n                                                  \n    end                                                                                               \n\n\n\nendmodule // fifo_v3\n",
+    "consult": "// Compiled by morty-0.9.0 / 2025-09-16 17:33:06.534271359 +02:00:00\n\n// Copyright 2018 ETH Zurich and University of Bologna.\n// Copyright and related rights are licensed under the Solderpad Hardware\n// License, Version 0.51 (the \"License\"); you may not use this file except in\n// compliance with the License. You may obtain a copy of the License at\n// http://solderpad.org/licenses/SHL-0.51. Unless required by applicable law\n// or agreed to in writing, software, hardware and materials distributed under\n// this License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR\n// CONDITIONS OF ANY KIND, either express or implied. See the License for the\n// specific language governing permissions and limitations under the License.\n\n// Author: Florian Zaruba <zarubaf@iis.ee.ethz.ch>\n\n// Copyright lowRISC contributors.\n// Licensed under the Apache License, Version 2.0, see LICENSE for details.\n// SPDX-License-Identifier: Apache-2.0\n\n// Macros and helper code for using assertions.\n//  - Provides default clk and rst options to simplify code\n//  - Provides boiler plate template for common assertions\n\n\n\n\n\n///////////////////\n// Helper macros //\n///////////////////\n\n// helper macro to reduce code clutter, can be used to hide signal defs only used for assertions\n\n\n   \n\n// forcefully enable assertions with ASSERTS_OVERRIDE_ON, overriding any define that turns them off\n\n\n// Converts an arbitrary block of code into a Verilog string\n\n\n// ASSERT_RPT is available to change the reporting mechanism when an assert fails\n\n\n\n///////////////////////////////////////\n// Simple assertion and cover macros //\n///////////////////////////////////////\n\n// Default clk and reset signals used by assertion macros below.\n\n\n\n// Immediate assertion\n// Note that immediate assertions are sensitive to simulation glitches.\n\n\n// Assertion in initial block. Can be used for things like parameter checking.\n\n\n// Assertion in final block. Can be used for things like queues being empty\n// at end of sim, all credits returned at end of sim, state machines in idle\n// at end of sim.\n\n\n// Assert a concurrent property directly.\n// It can be called as a module (or interface) body item.\n\n// Note: Above we use (__rst !== '0) in the disable iff statements instead of\n// (__rst == '1).  This properly disables the assertion in cases when reset is X at\n// the beginning of a simulation. For that case, (reset == '1) does not disable the\n// assertion.\n\n// Assert a concurrent property NEVER happens\n\n\n// Assert that signal has a known value (each bit is either '0' or '1') after reset.\n// It can be called as a module (or interface) body item.\n\n\n//  Cover a concurrent property\n\n\n//////////////////////////////\n// Complex assertion macros //\n//////////////////////////////\n\n// Assert that signal is an active-high pulse with pulse length of 1 clock cycle\n\n\n// Assert that a property is true only when an enable signal is set.  It can be called as a module\n// (or interface) body item.\n\n\n// Assert that signal has a known value (each bit is either '0' or '1') after reset if enable is\n// set.  It can be called as a module (or interface) body item.\n\n\n///////////////////////\n// Assumption macros //\n///////////////////////\n\n// Assume a concurrent property\n\n\n// Assume an immediate property\n\n\n//////////////////////////////////\n// For formal verification only //\n//////////////////////////////////\n\n// Note that the existing set of ASSERT macros specified above shall be used for FPV,\n// thereby ensuring that the assertions are evaluated during DV simulations as well.\n\n// ASSUME_FPV\n// Assume a concurrent property during formal verification only.\n\n\n// ASSUME_I_FPV\n// Assume a concurrent property during formal verification only.\n\n\n// COVER_FPV\n// Cover a concurrent property during formal verification\n\n\n\n // COMMON_CELLS_ASSERTIONS_SVH\n\n\nmodule fifo_v3 #(\n    parameter bit          FALL_THROUGH = 1'b0, // fifo is in fall-through mode\n    parameter int unsigned DATA_WIDTH   = 32,   // default data width if the fifo is of type logic\n    parameter int unsigned DEPTH        = 8,    // depth can be arbitrary from 0 to 2**32\n    parameter type dtype                = logic [DATA_WIDTH-1:0],\n    // DO NOT OVERWRITE THIS PARAMETER\n    parameter int unsigned ADDR_DEPTH   = (DEPTH > 1) ? $clog2(DEPTH) : 1\n)(\n    input  logic  clk_i,            // Clock\n    input  logic  rst_ni,           // Asynchronous reset active low\n    input  logic  flush_i,          // flush the queue\n    input  logic  testmode_i,       // test_mode to bypass clock gating\n    // status flags\n    output logic  full_o,           // queue is full\n    output logic  empty_o,          // queue is empty\n    output logic  [ADDR_DEPTH-1:0] usage_o,  // fill pointer\n    // as long as the queue is not full we can push new data\n    input  dtype  data_i,           // data to push into the queue\n    input  logic  push_i,           // data is valid and can be pushed to the queue\n    // as long as the queue is not empty we can pop new elements\n    output dtype  data_o,           // output data\n    input  logic  pop_i             // pop head from queue\n);\n    // local parameter\n    // FIFO depth - handle the case of pass-through, synthesizer will do constant propagation\n    localparam int unsigned FifoDepth = (DEPTH > 0) ? DEPTH : 1;\n    // clock gating control\n    logic gate_clock;\n    // pointer to the read and write section of the queue\n    logic [ADDR_DEPTH - 1:0] read_pointer_n, read_pointer_q, write_pointer_n, write_pointer_q;\n    // keep a counter to keep track of the current queue status\n    // this integer will be truncated by the synthesis tool\n    logic [ADDR_DEPTH:0] status_cnt_n, status_cnt_q;\n    // actual memory\n    dtype [FifoDepth - 1:0] mem_n, mem_q;\n\n    assign usage_o = status_cnt_q[ADDR_DEPTH-1:0];\n\n    if (DEPTH == 0) begin : gen_pass_through\n        assign empty_o     = ~push_i;\n        assign full_o      = ~pop_i;\n    end else begin : gen_fifo\n        assign full_o       = (status_cnt_q == FifoDepth[ADDR_DEPTH:0]);\n        assign empty_o      = (status_cnt_q == 0) & ~(FALL_THROUGH & push_i);\n    end\n    // status flags\n\n    // read and write queue logic\n    always_comb begin : read_write_comb\n        // default assignment\n        read_pointer_n  = read_pointer_q;\n        write_pointer_n = write_pointer_q;\n        status_cnt_n    = status_cnt_q;\n        data_o          = (DEPTH == 0) ? data_i : mem_q[read_pointer_q];\n        mem_n           = mem_q;\n        gate_clock      = 1'b1;\n\n        // push a new element to the queue\n        if (push_i && ~full_o) begin\n            // push the data onto the queue\n            mem_n[write_pointer_q] = data_i;\n            // un-gate the clock, we want to write something\n            gate_clock = 1'b0;\n            // increment the write counter\n            // this is dead code when DEPTH is a power of two\n            if (write_pointer_q == FifoDepth[ADDR_DEPTH-1:0] - 1)\n                write_pointer_n = '0;\n            else\n                write_pointer_n = write_pointer_q + 1;\n            // increment the overall counter\n            status_cnt_n    = status_cnt_q + 1;\n        end\n\n        if (pop_i && ~empty_o) begin\n            // read from the queue is a default assignment\n            // but increment the read pointer...\n            // this is dead code when DEPTH is a power of two\n            if (read_pointer_n == FifoDepth[ADDR_DEPTH-1:0] - 1)\n                read_pointer_n = '0;\n            else\n                read_pointer_n = read_pointer_q + 1;\n            // ... and decrement the overall count\n            status_cnt_n   = status_cnt_q - 1;\n        end\n\n        // keep the count pointer stable if we push and pop at the same time\n        if (push_i && pop_i &&  ~full_o && ~empty_o)\n            status_cnt_n   = status_cnt_q;\n\n        // FIFO is in pass through mode -> do not change the pointers\n        if (FALL_THROUGH && (status_cnt_q == 0) && push_i) begin\n            data_o = data_i;\n            if (pop_i) begin\n                status_cnt_n = status_cnt_q;\n                read_pointer_n = read_pointer_q;\n                write_pointer_n = write_pointer_q;\n            end\n        end\n    end\n\n    // sequential process\n    always_ff @(posedge clk_i or negedge rst_ni) begin\n        if(~rst_ni) begin\n            read_pointer_q  <= '0;\n            write_pointer_q <= '0;\n            status_cnt_q    <= '0;\n        end else begin\n            if (flush_i) begin\n                read_pointer_q  <= '0;\n                write_pointer_q <= '0;\n                status_cnt_q    <= '0;\n             end else begin\n                read_pointer_q  <= read_pointer_n;\n                write_pointer_q <= write_pointer_n;\n                status_cnt_q    <= status_cnt_n;\n            end\n        end\n    end\n\n    always_ff @(posedge clk_i or negedge rst_ni) begin\n        if(~rst_ni) begin\n            mem_q <= {FifoDepth{dtype'('0)}};\n        end else if (!gate_clock) begin\n            mem_q <= mem_n;\n        end\n    end\n\ninitial begin                                        \n    depth_0: assert (DEPTH > 0)                            \n      else begin                                       \n        $error(\"[ASSERT FAILED] [%m] %s: %s (%s:%0d)\", \"depth_0\", \"DEPTH must be greater than 0.\", \"/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv\", 5); \n \n      end                                              \n  end                                                  \n\n\n    full_write: assert property (@(posedge clk_i) disable iff ((!rst_ni) !== '0) (full_o |-> ~push_i))                    \n    else begin                                                                                        \n      $error(\"[ASSERT FAILED] [%m] %s: %s (%s:%0d)\", \"full_write\", \"Trying to push new data although the FIFO is full.\", \"/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv\", 5); \n                                                  \n    end                                                                                               \n\n\n    empty_read: assert property (@(posedge clk_i) disable iff ((!rst_ni) !== '0) (empty_o |-> ~pop_i))                    \n    else begin                                                                                        \n      $error(\"[ASSERT FAILED] [%m] %s: %s (%s:%0d)\", \"empty_read\", \"Trying to pop data although the FIFO is empty.\", \"/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv\", 5); \n                                                  \n    end                                                                                               \n\n\n\nendmodule // fifo_v3\n",
     "reuse": "module fifo_v3 #(\n    parameter bit          FALL_THROUGH = 1'b0, // fifo is in fall-through mode\n    parameter int unsigned DATA_WIDTH   = 32,   // default data width if the fifo is of type logic\n    parameter int unsigned DEPTH        = 8,    // depth can be arbitrary from 0 to 2**32\n    parameter type dtype                = logic [DATA_WIDTH-1:0],\n    // DO NOT OVERWRITE THIS PARAMETER\n    parameter int unsigned ADDR_DEPTH   = (DEPTH > 1) ? $clog2(DEPTH) : 1\n)(\n    input  logic  clk_i,            // Clock\n    input  logic  rst_ni,           // Asynchronous reset active low\n    input  logic  flush_i,          // flush the queue\n    input  logic  testmode_i,       // test_mode to bypass clock gating\n    // status flags\n    output logic  full_o,           // queue is full\n    output logic  empty_o,          // queue is empty\n    output logic  [ADDR_DEPTH-1:0] usage_o,  // fill pointer\n    // as long as the queue is not full we can push new data\n    input  dtype  data_i,           // data to push into the queue\n    input  logic  push_i,           // data is valid and can be pushed to the queue\n    // as long as the queue is not empty we can pop new elements\n    output dtype  data_o,           // output data\n    input  logic  pop_i             // pop head from queue\n);\n    // local parameter\n    // FIFO depth - handle the case of pass-through, synthesizer will do constant propagation\n    localparam int unsigned FifoDepth = (DEPTH > 0) ? DEPTH : 1;\n    // clock gating control\n    logic gate_clock;\n    // pointer to the read and write section of the queue\n    logic [ADDR_DEPTH - 1:0] read_pointer_n, read_pointer_q, write_pointer_n, write_pointer_q;\n    // keep a counter to keep track of the current queue status\n    // this integer will be truncated by the synthesis tool\n    logic [ADDR_DEPTH:0] status_cnt_n, status_cnt_q;\n    // actual memory\n    dtype [FifoDepth - 1:0] mem_n, mem_q;\n\n    assign usage_o = status_cnt_q[ADDR_DEPTH-1:0];\n\n    if (DEPTH == 0) begin : gen_pass_through\n        assign empty_o     = ~push_i;\n        assign full_o      = ~pop_i;\n    end else begin : gen_fifo\n        assign full_o       = (status_cnt_q == FifoDepth[ADDR_DEPTH:0]);\n        assign empty_o      = (status_cnt_q == 0) & ~(FALL_THROUGH & push_i);\n    end\n    // status flags\n\n    // read and write queue logic\n    always_comb begin : read_write_comb\n        // default assignment\n        read_pointer_n  = read_pointer_q;\n        write_pointer_n = write_pointer_q;\n        status_cnt_n    = status_cnt_q;\n        data_o          = (DEPTH == 0) ? data_i : mem_q[read_pointer_q];\n        mem_n           = mem_q;\n        gate_clock      = 1'b1;\n\n        // push a new element to the queue\n        if (push_i && ~full_o) begin\n            // push the data onto the queue\n            mem_n[write_pointer_q] = data_i;\n            // un-gate the clock, we want to write something\n            gate_clock = 1'b0;\n            // increment the write counter\n            // this is dead code when DEPTH is a power of two\n            if (write_pointer_q == FifoDepth[ADDR_DEPTH-1:0] - 1)\n                write_pointer_n = '0;\n            else\n                write_pointer_n = write_pointer_q + 1;\n            // increment the overall counter\n            status_cnt_n    = status_cnt_q + 1;\n        end\n\n        if (pop_i && ~empty_o) begin\n            // read from the queue is a default assignment\n            // but increment the read pointer...\n            // this is dead code when DEPTH is a power of two\n            if (read_pointer_n == FifoDepth[ADDR_DEPTH-1:0] - 1)\n                read_pointer_n = '0;\n            else\n                read_pointer_n = read_pointer_q + 1;\n            // ... and decrement the overall count\n            status_cnt_n   = status_cnt_q - 1;\n        end\n\n        // keep the count pointer stable if we push and pop at the same time\n        if (push_i && pop_i &&  ~full_o && ~empty_o)\n            status_cnt_n   = status_cnt_q;\n\n        // FIFO is in pass through mode -> do not change the pointers\n        if (FALL_THROUGH && (status_cnt_q == 0) && push_i) begin\n            data_o = data_i;\n            if (pop_i) begin\n                status_cnt_n = status_cnt_q;\n                read_pointer_n = read_pointer_q;\n                write_pointer_n = write_pointer_q;\n            end\n        end\n    end\n\n    // sequential process\n    always_ff @(posedge clk_i or negedge rst_ni) begin\n        if(~rst_ni) begin\n            read_pointer_q  <= '0;\n            write_pointer_q <= '0;\n            status_cnt_q    <= '0;\n        end else begin\n            if (flush_i) begin\n                read_pointer_q  <= '0;\n                write_pointer_q <= '0;\n                status_cnt_q    <= '0;\n             end else begin\n                read_pointer_q  <= read_pointer_n;\n                write_pointer_q <= write_pointer_n;\n                status_cnt_q    <= status_cnt_n;\n            end\n        end\n    end\n\n    always_ff @(posedge clk_i or negedge rst_ni) begin\n        if(~rst_ni) begin\n            mem_q <= {FifoDepth{dtype'('0)}};\n        end else if (!gate_clock) begin\n            mem_q <= mem_n;\n        end\n    end\n\ninitial begin                                        \n    depth_0: assert (DEPTH > 0)                            \n      else begin                                       \n        $error(\"[ASSERT FAILED] [%m] %s: %s (%s:%0d)\", \"depth_0\", \"DEPTH must be greater than 0.\", \"/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv\", 5); \n \n      end                                              \n  end                                                  \n\n\n    full_write: assert property (@(posedge clk_i) disable iff ((!rst_ni) !== '0) (full_o |-> ~push_i))                    \n    else begin                                                                                        \n      $error(\"[ASSERT FAILED] [%m] %s: %s (%s:%0d)\", \"full_write\", \"Trying to push new data although the FIFO is full.\", \"/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv\", 5); \n                                                  \n    end                                                                                               \n\n\n    empty_read: assert property (@(posedge clk_i) disable iff ((!rst_ni) !== '0) (empty_o |-> ~pop_i))                    \n    else begin                                                                                        \n      $error(\"[ASSERT FAILED] [%m] %s: %s (%s:%0d)\", \"empty_read\", \"Trying to pop data although the FIFO is empty.\", \"/scratch2/aottaviano/rtlgen-explore/mage/pulp-verilog-eval/assets/common_cells/src/fifo_v3.sv\", 5); \n                                                  \n    end                                                                                               \n\n\n\nendmodule"
   }
 }
