@@ -60,50 +60,6 @@ NEVER include implementation specifics gleaned from the RTL (FSM encodings, stag
 Use the RTL only to infer intent and external requirements. Output Markdown only.
 """
 
-USER_RTL_TB_PROMPT_TEMPLATE = """
-Write a **specification document** for a module to be designed, based on the behavior
-you can infer from the following testbench and the reference RTL. The spec must not reveal
-implementation details from the reference RTL; treat it only as a hint to understand intent.
-
-Target module name: {target_name}
-
-### Short exemplar spec (style only)
-```
-{example_spec}
-```
-
-### Your task
-- Produce a more detailed, production-quality spec than the exemplar.
-- Include an interface list with directions, widths, reset polarities, and timing.
-- Clearly describe protocols (valid/ready, AXI(-Lite), req/rsp, etc.).
-- Clarify configuration parameters & constraints visible at the interface.
-- Define behavior on reset, backpressure, invalid/exceptional inputs.
-- Avoid micro-architectural/implementation-specific guidance.
-- Do not include a title for the specification document.
-
-### Provided Testbench
-```systemverilog
-{tb_text}
-```
-
-### Provided Reference RTL
-```systemverilog
-{rtl_text}
-```
-
-Return only the final specification in Markdown. Do not include code.
-
-[NAMING CONVENTION]
-
-1. In the specification you generate, you must name the top level to be
-designed "TopModule". So never mention the specific name of the module you read
-from the reference RTL.
-2. Always introduce the spec with "Design a module called TopModule. This
-module [...]". This way, the RTL designer (human or AI-based) knows exactly how
-to call the module. In the remainder, you describe what the module does
-(specifications), and when you refer to it, you always call it "TopModule".
-"""
-
 USER_RTL_PROMPT_TEMPLATE = """
 Write a **specification document** for a module to be designed, based on the behavior
 you can infer from the following reference RTL. The spec must not reveal
@@ -305,6 +261,7 @@ def _validate_and_optionally_fix_json_with_llm(history: List[ChatMessage],
                                                llm,
                                                max_trials: int = 3) -> Dict[str, Any]:
     local_tc = TokenCounter(llm)
+    #local_tc.set_tpm_limit(32000)
     local_tc.set_cur_tag("RTL_JSON_Spec")
     response = None
     for _ in range(max_trials):
@@ -379,7 +336,6 @@ def generate_rtl_json_spec(llm,
 
 def main():
     ap = argparse.ArgumentParser(description="Generate a spec (Markdown) from tb.sv + rtl_golden.sv via LLM, no implementation leakage.")
-    ap.add_argument("--tb", required=False, default="", help="Path to the testbench file (SystemVerilog). Optional, use empty string or omit arg to disable.")
     ap.add_argument("--rtl", required=True, help="Path to the reference RTL file (SystemVerilog)")
     ap.add_argument("--top", required=True, help="Explicit top-level module name (in RTL) for JSON extraction")
     ap.add_argument("--out", default="spec.md", help="Output filename (default: spec.md)")
@@ -387,56 +343,16 @@ def main():
     ap.add_argument("--model", default="gpt-4o-2024-08-06", help="LLM model name")
     ap.add_argument("--key-cfg-path", default="./key.cfg", help="Path to API keys configuration file")
     ap.add_argument("--max-token", type=int, default=8192, help="Maximum tokens per LLM response")
-    ap.add_argument("--tokens", type=int, default=240000, help="Total token budget for prompt+inputs")
+    ap.add_argument("--tokens", type=int, default=12000, help="Total token budget for prompt+inputs")
     ap.add_argument("--temperature", type=float, default=0.85, help="LLM sampling temperature")
     ap.add_argument("--top-p", type=float, default=0.95, help="LLM nucleus sampling parameter")
     ap.add_argument("--tag", default="spec_gen", help="Tag for token counter logging")
+    ap.add_argument("--emit", choices=["bench", "lib", "all"], default="all", help="Artifacts to emit: bench (md/txt), lib (json), or all (default).")
     args = ap.parse_args()
 
-    if not os.path.isfile(args.rtl):
-        print("RTL file not found.", file=sys.stderr); sys.exit(1)
-    if args.tb and not os.path.isfile(args.tb):
-        logger.warning(f"Testbench not found at {args.tb}; proceeding without TB.")
-        args.tb = ""
-
-    set_exp_setting(temperature=args.temperature, top_p=args.top_p)
-    llm = get_llm(model=args.model, cfg_path=args.key_cfg_path, max_token=args.max_token,
-                  provider=args.provider, temperature=args.temperature)
-
-    tc = TokenCounter(llm); tc.set_cur_tag(args.tag)
-    tb_txt = _read(args.tb) if args.tb else ""
-    rtl_txt = _read(args.rtl)
-    
-    sys_msg = ChatMessage(role=MessageRole.SYSTEM, content=SYSTEM_PROMPT)
-    
-    if tb_txt:
-        user_raw = USER_RTL_TB_PROMPT_TEMPLATE.format(
-            target_name=args.top, example_spec=EXAMPLE_SPEC,
-            tb_text="{{TB_PLACEHOLDER}}", rtl_text="{{RTL_PLACEHOLDER}}"
-        )
-        static = user_raw.replace("{{TB_PLACEHOLDER}}", "").replace("{{RTL_PLACEHOLDER}}", "")
-        reserve = 3000
-        rem = max(args.tokens - reserve, 2000)
-        tb_share = int(rem * 0.6)
-        rtl_share = rem - tb_share
-        trimmed = _soft_trim(tc, [(static, 2000), (tb_txt, tb_share), (rtl_txt, rtl_share)], args.tokens)
-        user_final = user_raw.replace("{{TB_PLACEHOLDER}}", trimmed[1]).replace("{{RTL_PLACEHOLDER}}", trimmed[2])
-    else:
-        user_raw = USER_RTL_PROMPT_TEMPLATE.format(
-        target_name=args.top, example_spec=EXAMPLE_SPEC,
-        rtl_text="{{RTL_PLACEHOLDER}}"    
-        )
-        static = user_raw.replace("{{RTL_PLACEHOLDER}}", "")
-        reserve = 3000
-        rem = max(args.tokens - reserve, 2000)
-        trimmed = _soft_trim(tc, [(static, 2000), (rtl_txt, rem)], args.tokens)
-        user_final = user_raw.replace("{{RTL_PLACEHOLDER}}", trimmed[1])
-
-    user_msg = ChatMessage(role=MessageRole.USER, content=user_final)
-    resp, cnt = tc.count_chat([sys_msg, user_msg], llm=llm)
-    spec_md = (resp.message.content or "").strip()
-    try: spec_md = reformat_json_string(spec_md)
-    except Exception: pass
+    emit = args.emit
+    gen_bench = emit in ("bench", "all")
+    gen_lib = emit in ("lib", "all")
 
     out_dir = os.path.dirname(os.path.abspath(args.out)) or "."
     os.makedirs(out_dir, exist_ok=True)
@@ -445,32 +361,73 @@ def main():
     out_txt = os.path.join(out_dir, base + ".txt")
     out_json = os.path.join(out_dir, base + ".json")
 
-    with open(out_md, "w", encoding="utf-8") as f:
-        f.write(spec_md + ("" if spec_md.endswith("\n") else "\n"))
-    spec_txt = md_to_txt(spec_md)
-    with open(out_txt, "w", encoding="utf-8") as f:
-        f.write(spec_txt + ("" if spec_txt.endswith("\n") else "\n"))
+    if not os.path.isfile(args.rtl):
+        print("RTL file not found.", file=sys.stderr); sys.exit(1)
 
-    json_out_path = generate_rtl_json_spec(
-        llm=llm,
-        rtl_path=args.rtl,
-        rtl_text=rtl_txt,
-        top_module_name=args.top,
-        out_path=out_json
-    )
+    set_exp_setting(temperature=args.temperature, top_p=args.top_p)
+    llm = get_llm(model=args.model, cfg_path=args.key_cfg_path, max_token=args.max_token,
+                  provider=args.provider, temperature=args.temperature)
 
-    stats = {"model": llm.metadata.model_name, "provider": args.provider,
-             "in_tokens": cnt.in_token_cnt, "out_tokens": cnt.out_token_cnt}
-    try:
-        cost = tc.token_cost
-        stats["estimated_usd"] = round(cnt.in_token_cnt*cost.in_token_cost_per_token +
-                                       cnt.out_token_cnt*cost.out_token_cost_per_token, 6)
-    except Exception: pass
-    with open(os.path.splitext(args.out)[0]+".usage.json","w",encoding="utf-8") as f:
-        json.dump(stats,f,indent=2)
+    tc = TokenCounter(llm); tc.set_cur_tag(args.tag)
+    rtl_txt = _read(args.rtl)
 
-    logger.info(f"Usage: in {cnt.in_token_cnt} tokens, out {cnt.out_token_cnt} tokens")
-    if "estimated_usd" in stats: logger.info(f"Estimated cost: \${stats['estimated_usd']:.4f}")
+    if gen_bench:
+        sys_msg = ChatMessage(role=MessageRole.SYSTEM, content=SYSTEM_PROMPT)
+        user_raw = USER_RTL_PROMPT_TEMPLATE.format(
+            target_name=args.top, example_spec=EXAMPLE_SPEC, rtl_text="{{RTL_PLACEHOLDER}}"
+        )
+        static = user_raw.replace("{{RTL_PLACEHOLDER}}", "")
+        reserve = 3000
+        rem = max(args.tokens - reserve, 2000)
+        trimmed = _soft_trim(tc, [(static, 2000), (rtl_txt, rem)], args.tokens)
+        user_final = user_raw.replace("{{RTL_PLACEHOLDER}}", trimmed[1])
+
+        user_msg = ChatMessage(role=MessageRole.USER, content=user_final)
+        resp, cnt = tc.count_chat([sys_msg, user_msg], llm=llm)
+        spec_md = (resp.message.content or "").strip()
+        try:
+            spec_md = reformat_json_string(spec_md)
+        except Exception:
+            pass
+
+        os.makedirs(out_dir, exist_ok=True)
+        with open(out_md, "w", encoding="utf-8") as f:
+            f.write(spec_md + ("" if spec_md.endswith("\n") else "\n"))
+        spec_txt = md_to_txt(spec_md)
+        with open(out_txt, "w", encoding="utf-8") as f:
+            f.write(spec_txt + ("" if spec_txt.endswith("\n") else "\n"))
+    else:
+        cnt = None  # no spec LLM call in lib-only mode
+
+    json_out_path = None
+    if gen_lib:
+        os.makedirs(out_dir, exist_ok=True)  # ensure dir exists for json-only too
+        json_out_path = generate_rtl_json_spec(
+            llm=llm,
+            rtl_path=args.rtl,
+            rtl_text=rtl_txt,
+            top_module_name=args.top,
+            out_path=out_json
+        )
+
+    stats = {"model": llm.metadata.model_name, "provider": args.provider}
+    if cnt is not None:
+        stats.update({"in_tokens": cnt.in_token_cnt, "out_tokens": cnt.out_token_cnt})
+        try:
+            cost = tc.token_cost
+            stats["estimated_usd"] = round(
+                cnt.in_token_cnt * cost.in_token_cost_per_token +
+                cnt.out_token_cnt * cost.out_token_cost_per_token, 6
+            )
+        except Exception:
+            pass
+    with open(os.path.splitext(args.out)[0] + ".usage.json", "w", encoding="utf-8") as f:
+        json.dump(stats, f, indent=2)
+
+    if cnt is not None:
+        logger.info(f"Usage: in {cnt.in_token_cnt} tokens, out {cnt.out_token_cnt} tokens")
+        if "estimated_usd" in stats:
+            logger.info(f"Estimated cost: ${stats['estimated_usd']:.4f}")
 
 if __name__ == "__main__":
     main()

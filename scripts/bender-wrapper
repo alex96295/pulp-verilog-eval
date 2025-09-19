@@ -22,6 +22,14 @@ SV_INSTANTIATION_RE = re.compile(r"""
     (?P<inst>[A-Za-z_]\w*)\s*(?:\[[^\]]+\]\s*)?\(
 """, re.M|re.S|re.X)
 EXCLUDE_BEFORE_RE = re.compile(r"\b(module|macromodule|primitive|interface|class|package|program|checker|function|task|typedef|struct|union|enum)\b")
+SV_LINE_COMMENT_RE = re.compile(r"//.*?$", re.M)
+SV_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+
+def strip_sv_comments(text: str) -> str:
+    # Remove block comments first, then line comments
+    no_block = SV_BLOCK_COMMENT_RE.sub("", text)
+    no_comments = SV_LINE_COMMENT_RE.sub("", no_block)
+    return no_comments
 
 norm = lambda p: os.path.normpath(os.path.realpath(p))
 normalize_name = lambda s: re.sub(r"[_\-.]", "", s).lower()
@@ -224,29 +232,58 @@ def collect_used_set(repos:List[RepoIndex], starts:List[Tuple[int,str,int]]):
         if cur in seen: continue
         seen.add(cur)
         r=repos[ri]; txt=r.read_text(cur); scan_nonmod(cur, txt)
-        inst=set()
+        inst = set()
         if txt:
-            for m in SV_INSTANTIATION_RE.finditer(txt):
-                if not EXCLUDE_BEFORE_RE.search(txt[max(0,m.start()-64):m.start()]): inst.add(m.group("mod"))
-        if lvl>0 and inst:
-            for lo in range(lvl-1,-1,-1):
-                mods=r.level_to_mods.get(lo,{})
+            code = strip_sv_comments(txt)
+            for m in SV_INSTANTIATION_RE.finditer(code):
+                if not EXCLUDE_BEFORE_RE.search(code[max(0, m.start()-64):m.start()]):
+                    inst.add(m.group("mod"))
+        if inst:
+            # Prefer same-repo matches in levels <= current (including equal)
+            for lo in range(lvl, -1, -1):
+                mods = r.level_to_mods.get(lo, {})
                 for mod in inst:
-                    rel=mods.get(mod);  ap=r.resolve(rel) if rel else None
-                    if not ap or (txt and file_defines_module(txt,mod)): continue
-                    if ap not in used: used.add(ap)
+                    rel = mods.get(mod)
+                    ap = r.resolve(rel) if rel else None
+                    # Skip if the current file actually defines this module (avoid self-loop)
+                    if not ap or (txt and file_defines_module(txt, mod)):
+                        continue
+                    if ap not in used:
+                        used.add(ap)
                     dep[cur].append((ap, lo, r.name))
-                    if lo>0: q.append((ri,ap,lo))
+                    # Always enqueue so we also traverse level-0 children
+                    q.append((ri, ap, lo))
+
+            # Fallback: if a module wasn't found in <= lvl, try other levels in same repo
+            for mod in inst:
+                if any(mod in r.level_to_mods.get(lo, {}) for lo in range(lvl, -1, -1)):
+                    continue  # already handled
+                for lo, mods in r.level_to_mods.items():
+                    rel = mods.get(mod)
+                    if not rel:
+                        continue
+                    ap = r.resolve(rel)
+                    if not ap or (txt and file_defines_module(txt, mod)):
+                        continue
+                    if ap not in used:
+                        used.add(ap)
+                    dep[cur].append((ap, lo, r.name))
+                    q.append((ri, ap, lo))
+                    break  # first hit is enough
         if inst:
             for mod in inst:
-                cands=sorted(mod_idx.get(mod,[]), key=lambda t: t[2] or 0)
-                for rj,rel,lv in cands:
-                    if rj==ri: continue
-                    ap=repos[rj].resolve(rel)
-                    if not ap: continue
-                    if ap not in used: used.add(ap)
+                cands = sorted(mod_idx.get(mod, []), key=lambda t: t[2] or 0)
+                for rj, rel, lv in cands:
+                    if rj == ri:
+                        continue  # same-repo handled above
+                    ap = repos[rj].resolve(rel)
+                    if not ap:
+                        continue
+                    if ap not in used:
+                        used.add(ap)
                     dep[cur].append((ap, lv, repos[rj].name))
-                    if lv and lv>0: q.append((rj,ap,lv))
+                    if lv and lv > 0:
+                        q.append((rj, ap, lv))
     return used, dep
 
 # -------- JSON trimming --------

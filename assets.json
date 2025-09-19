@@ -1,6 +1,6 @@
 {
   "assets/common_cells": [
-    ["fifo_v3", "fifo_v3.sv", "fifo_tb.sv"],
-    ["credit_counter", "credit_counter.sv", ""]
+    ["delta_counter", "delta_counter.sv", "", "all"],
+    ["fifo_v3", "fifo_v3.sv", "fifo_tb.sv", "all"]
   ]
 }
