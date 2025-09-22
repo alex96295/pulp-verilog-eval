@@ -229,14 +229,8 @@ for line in "${LINES[@]}"; do
 
   if [[ $LIB_ENABLED -eq 1 ]]; then
     [[ -n "$GEN_JSON" && -f "$GEN_JSON" ]] && mv "$GEN_JSON" "$LIB_DIR/${TOP_NAME}.json" || log "WARNING: Could not find generated ${TOP_NAME}.json"
-    [[ -n "$RTL_SV_TMP" && -f "$RTL_SV_TMP" ]] && rm -f "$RTL_SV_TMP"
-    [[ -n "$TB_SV_TMP" && -f "$TB_SV_TMP" ]] && rm -f "$TB_SV_TMP"
-    [[ -n "$RTLTB_SV_TMP" && -f "$RTLTB_SV_TMP" ]] && rm -f "$RTLTB_SV_TMP"
   else
     [[ -n "$GEN_JSON" && -f "$GEN_JSON" ]] && rm -f "$GEN_JSON" || true
-    [[ -n "$RTL_SV_TMP" && -f "$RTL_SV_TMP" ]] && rm -f "$RTL_SV_TMP"
-    [[ -n "$TB_SV_TMP" && -f "$TB_SV_TMP" ]] && rm -f "$TB_SV_TMP"
-    [[ -n "$RTLTB_SV_TMP" && -f "$RTLTB_SV_TMP" ]] && rm -f "$RTLTB_SV_TMP"
   fi
 
   # Normalize identifiers across generated SVs
