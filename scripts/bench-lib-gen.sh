@@ -220,7 +220,7 @@ for line in "${LINES[@]}"; do
     [[ -n "$GEN_TXT" && -f "$GEN_TXT" ]] && mv "$GEN_TXT" "$BENCH_DIR/${PROB_ID}_${TOP_NAME}_prompt.txt" || log "WARNING: Could not find generated ${TOP_NAME}.txt"
     [[ -n "$RTL_SV_TMP" && -f "$RTL_SV_TMP" ]] && mv "$RTL_SV_TMP" "$RTL_SV"
     [[ -n "$TB_SV_TMP" && -f "$TB_SV_TMP" ]] && mv "$TB_SV_TMP" "$TB_SV"
-    [[ -n "$RTLTB_SV_TMP" && -f "$RTLTB_SV_TMP" ]] && mv "$RTLTB_SV_TMP" "$RTL_SV"
+    [[ -n "$RTLTB_SV_TMP" && -f "$RTLTB_SV_TMP" ]] && mv "$RTLTB_SV_TMP" "$RTLTB_SV"
   else
     [[ -n "$RTL_SV_TMP" && -f "$RTL_SV_TMP" ]] && rm -f "$RTL_SV_TMP"
     [[ -n "$TB_SV_TMP" && -f "$TB_SV_TMP" ]] && rm -f "$TB_SV_TMP"
