@@ -343,30 +343,6 @@ def trim_json_manifest(full_path:str, used_abs:Set[str], out_path:str):
     with open(out_path,"w",encoding="utf-8") as f:
         json.dump(data,f,indent=2,ensure_ascii=False); f.write("\n")
 
-# -------- (legacy) flist trimming --------
-def extract_path_from_line(line:str)->Optional[str]:
-    s=line.strip()
-    if not s or s.startswith("#"): return None
-    for tok in reversed(s.split()):
-        t=tok.strip('",')
-        if t.endswith((".sv",".v",".svh")): return t
-    m=re.search(r'"([^"]+\.(?:svh?|v))"', s);  return m.group(1) if m else None
-
-def trim_filelist(full_f:str, used_abs:Set[str], out_f:str):
-    lines=open(full_f,"r",encoding="utf-8").read().splitlines()
-    used_norm={os.path.normpath(p) for p in used_abs}; kept=[]; seen=set()
-    for ln in lines:
-        p=extract_path_from_line(ln)
-        if not p: kept.append(ln); continue
-        ap=norm(p if os.path.isabs(p) else os.path.abspath(p))
-        if ap in used_norm: kept.append(ln); seen.add(ap)
-    miss=[p for p in used_abs if p.endswith(".svh") and os.path.normpath(p) not in seen]
-    if miss:
-        kept+=["", "# Appended headers detected via `include`/package use"]
-        kept+=sorted(os.path.relpath(h,start=os.getcwd()) for h in miss)
-    with open(out_f,"w",encoding="utf-8") as f:
-        f.write("\n".join(kept)+("\n" if kept and not kept[-1].endswith("\n") else ""))
-
 def derive_suffix(targets: List[str]) -> str:
     ts=set(t.lower() for t in targets)
     has_rtl = "rtl" in ts
