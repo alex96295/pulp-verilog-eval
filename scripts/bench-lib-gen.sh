@@ -238,21 +238,21 @@ for line in "${LINES[@]}"; do
   TOP_NAME_RE="$(escape_re "$TOP_NAME")"
 
   if [[ -f "$RTL_SV" ]]; then
-    perl -0777 -i -pe 's/\\b${TOP_NAME_RE}\\b/TopModule/g' "$RTL_SV"
+    perl -0777 -i -pe "s/\b${TOP_NAME_RE}\b/TopModule/g" -- "$RTL_SV"
   fi
 
   if [[ $BENCH_ENABLED -eq 1 && $TB_PRESENT -eq 1 ]]; then
     if [[ -n "${TB_STEM_VAL:-}" ]]; then
       TB_STEM_RE="$(escape_re "$TB_STEM_VAL")"
       if [[ -f "$TB_SV" ]]; then
-        perl -0777 -i -pe 's/\\b${TOP_NAME_RE}\\b/TopModule/g; s/\\b${TB_STEM_RE}\\b/TopTestbench/g' "$TB_SV"
+	perl -0777 -i -pe "s/\b${TOP_NAME_RE}\b/TopModule/g; s/\b${TB_STEM_RE}\b/TopTestbench/g" -- "$TB_SV"
       fi
       if [[ -f "$RTLTB_SV" ]]; then
-        perl -0777 -i -pe 's/\\b${TOP_NAME_RE}\\b/TopModule/g; s/\\b${TB_STEM_RE}\\b/TopTestbench/g' "$RTLTB_SV"
+	perl -0777 -i -pe "s/\b${TOP_NAME_RE}\b/TopModule/g; s/\b${TB_STEM_RE}\b/TopTestbench/g" -- "$RTLTB_SV"
       fi
     else
-      [[ -f "$TB_SV" ]] && perl -0777 -i -pe 's/\\b${TOP_NAME_RE}\\b/TopModule/g' "$TB_SV"
-      [[ -f "$RTLTB_SV" ]] && perl -0777 -i -pe 's/\\b${TOP_NAME_RE}\\b/TopModule/g' "$RTLTB_SV"
+      [[ -f "$TB_SV" ]] && perl -0777 -i -pe "s/\b${TOP_NAME_RE}\b/TopModule/g" -- "$TB_SV"
+      [[ -f "$RTLTB_SV" ]] && perl -0777 -i -pe "s/\b${TOP_NAME_RE}\b/TopModule/g" -- "$RTLTB_SV"
     fi
   fi
 
