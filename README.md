@@ -55,8 +55,8 @@ Install the dependencies:
 # get latest stable rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# bender
-cargo install bender
+# bender (TODO: we need an unreleased version; update when merged and released)
+cargo install --git https://github.com/pulp-platform/bender.git --branch aottaviano/filter-unused
 
 # morty
 cargo install --git https://github.com/pulp-platform/morty.git
