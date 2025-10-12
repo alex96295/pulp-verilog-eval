@@ -55,8 +55,8 @@ Install the dependencies:
 # get latest stable rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# bender
-cargo install bender
+# bender (TODO: we need an unreleased version; update when merged and released)
+cargo install --git https://github.com/pulp-platform/bender.git --branch aottaviano/filter-unused
 
 # morty
 cargo install --git https://github.com/pulp-platform/morty.git
@@ -85,6 +85,9 @@ JSON file. We provide a sample file in `$ROOT/assets.json` file. Then call:
   --top-p 0.95
 ```
 
+Input (`--tokens`) and output (`--max-token`) tokens should respect RPM and TPM
+limits of the model.
+
 ## Output
 
 | Name | Description |
@@ -98,6 +101,26 @@ JSON file. We provide a sample file in `$ROOT/assets.json` file. Then call:
 |-------------------------------------|----------------------------------------------------------------------------------------------------------|
 | `$ROOT/out/lib/<dut_name>.json` | LLM-generated structured input spec (json) based on the reference design. |
 
-An example output with the designs `fifo_v3` and `credit_counter` from PULP
-platform's [common_cells](https://github.com/pulp-platform/common_cells) is
+## Example
+
+An exemplary input json `assets.json`:
+
+```json
+{
+  "assets/common_cells": [
+    ["delta_counter", "delta_counter.sv", "", "all"],
+    ["fifo_v3", "fifo_v3.sv", "fifo_tb.sv", "all"]
+  ]
+}
+```
+
+The json keys for each asset directory follow the pattern, from left to right:
+
+* top-level module name
+* .sv source file where the top-level (DUT) is declared
+* .sv source file with a testbench for the DUT. If not available, leave empty
+* <bench|lib|all> to generate benchmark files, library files, or both
+
+A sample output generated with the designs `fifo_v3` and `delta_counter` from
+PULP platform's [common_cells](https://github.com/pulp-platform/common_cells) is
 provided in `out/{bench,lib}`.

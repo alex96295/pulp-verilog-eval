@@ -22,6 +22,14 @@ SV_INSTANTIATION_RE = re.compile(r"""
     (?P<inst>[A-Za-z_]\w*)\s*(?:\[[^\]]+\]\s*)?\(
 """, re.M|re.S|re.X)
 EXCLUDE_BEFORE_RE = re.compile(r"\b(module|macromodule|primitive|interface|class|package|program|checker|function|task|typedef|struct|union|enum)\b")
+SV_LINE_COMMENT_RE = re.compile(r"//.*?$", re.M)
+SV_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+
+def strip_sv_comments(text: str) -> str:
+    # Remove block comments first, then line comments
+    no_block = SV_BLOCK_COMMENT_RE.sub("", text)
+    no_comments = SV_LINE_COMMENT_RE.sub("", no_block)
+    return no_comments
 
 norm = lambda p: os.path.normpath(os.path.realpath(p))
 normalize_name = lambda s: re.sub(r"[_\-.]", "", s).lower()
@@ -58,7 +66,6 @@ def extract_sources_from_yaml(y)->List[str]:
             for v in n.values(): yield from walk(v)
     return list(walk(y.get("sources"))) if isinstance(y,dict) and "sources" in y else []
 
-# -------- Repo model --------
 class RepoIndex:
     def __init__(self, root:str, yml:str, name:str):
         self.root, self.bender_yml, self.name = norm(root), yml, name
@@ -94,7 +101,6 @@ class RepoIndex:
             ap=self.resolve(rel);  txt=self.read_text(ap) if ap else ""
             for m in SV_PACKAGE_DEF_RE.finditer(txt): self.packages[m.group(1)] = rel
 
-# -------- Loader --------
 def load_repos(main_yml:str)->List[RepoIndex]:
     root = norm(os.path.dirname(main_yml))
     main_yaml = yaml.safe_load(open(main_yml,"r",encoding="utf-8"))
@@ -117,7 +123,6 @@ def load_repos(main_yml:str)->List[RepoIndex]:
         except Exception: pass
     return repos
 
-# -------- Indices / helpers --------
 def build_indices(repos:List[RepoIndex]):
     mod_idx: Dict[str,List[Tuple[int,str,int]]] = defaultdict(list)
     pkg_idx: Dict[str,List[Tuple[int,str]]] = defaultdict(list)
@@ -183,8 +188,21 @@ def select_tb_roots(repos:List[RepoIndex], tokens:List[str])->Set[str]:
                     roots.add(ap)
     return roots
 
-# -------- Core traversal --------
-def collect_used_set(repos:List[RepoIndex], starts:List[Tuple[int,str,int]]):
+def collect_used_set(
+    repos:List[RepoIndex],
+    starts:List[Tuple[int,str,int]],
+    allow_rtl: bool,
+    dut_abs_paths: Set[str]
+):
+    """
+    Traverse used files from given start points.
+
+    Rules:
+    - If allow_rtl is True: traverse everything (original behavior).
+    - If allow_rtl is False: exclude DUT files explicitly (from --top),
+      include any testbench files, and allow files from non-main repos
+      (TB infrastructure), but block non-test files in the main repo.
+    """
     mod_idx,_ = build_indices(repos)
     used:set=set(); dep=defaultdict(list)
     abs2info: Dict[str,Tuple[int,str,int]] = {}
@@ -192,12 +210,32 @@ def collect_used_set(repos:List[RepoIndex], starts:List[Tuple[int,str,int]]):
         for rel,lvl in r.levels_map.items():
             ap=r.resolve(rel)
             if ap: abs2info[ap]=(i,rel,lvl)
+
+    def _is_tb_rel(rel: Optional[str]) -> bool:
+        return bool(rel and is_tb(rel))
+
+    def _allow_file(ri: int, rel: Optional[str], ap: Optional[str]) -> bool:
+        if allow_rtl:
+            return True
+        # Never include DUT file(s) when RTL target not requested
+        if ap and ap in dut_abs_paths:
+            return False
+        # Allow all testbench files (any repo)
+        if _is_tb_rel(rel):
+            return True
+        # For non-test files, allow if they are from non-main repos (e.g., verification libs)
+        return ri != 0
+
     def scan_nonmod(fap:str, txt:str):
         if not txt: return
         for m in SV_INCLUDE_RE.finditer(txt):
-            inc = repos[abs2info.get(fap,(0,"",0))[0]].resolve(m.group(1), includer=fap)
+            ri_incl = abs2info.get(fap,(0,"",0))[0]
+            inc = repos[ri_incl].resolve(m.group(1), includer=fap)
             if inc and inc not in used:
-                used.add(inc); scan_nonmod(inc, repos[abs2info.get(fap,(0,"",0))[0]].read_text(inc))
+                rel_inc = abs2info.get(inc, (ri_incl, None, 0))[1]
+                if _allow_file(ri_incl, rel_inc, inc):
+                    used.add(inc)
+                    scan_nonmod(inc, repos[ri_incl].read_text(inc))
         for m in SV_PACKAGE_USE_IMPORT_RE.finditer(txt):
             pkg=m.group(1)
             for i,r in enumerate(repos):
@@ -205,8 +243,9 @@ def collect_used_set(repos:List[RepoIndex], starts:List[Tuple[int,str,int]]):
                 if rel:
                     ap=r.resolve(rel)
                     if ap and ap not in used:
-                        used.add(ap); dep[fap].append((ap, r.levels_map.get(rel,0), r.name))
-                        scan_nonmod(ap, r.read_text(ap))
+                        if _allow_file(i, rel, ap):
+                            used.add(ap); dep[fap].append((ap, r.levels_map.get(rel,0), r.name))
+                            scan_nonmod(ap, r.read_text(ap))
         for m in SV_PACKAGE_SCOPED_USE_RE.finditer(txt):
             pkg=m.group(1)
             for i,r in enumerate(repos):
@@ -214,8 +253,10 @@ def collect_used_set(repos:List[RepoIndex], starts:List[Tuple[int,str,int]]):
                 if rel:
                     ap=r.resolve(rel)
                     if ap and ap not in used:
-                        used.add(ap); dep[fap].append((ap, r.levels_map.get(rel,0), r.name))
-                        scan_nonmod(ap, r.read_text(ap))
+                        if _allow_file(i, rel, ap):
+                            used.add(ap); dep[fap].append((ap, r.levels_map.get(rel,0), r.name))
+                            scan_nonmod(ap, r.read_text(ap))
+
     q=deque()
     for ri,ap,lvl in starts: used.add(ap); q.append((ri,ap,lvl))
     seen=set()
@@ -224,32 +265,63 @@ def collect_used_set(repos:List[RepoIndex], starts:List[Tuple[int,str,int]]):
         if cur in seen: continue
         seen.add(cur)
         r=repos[ri]; txt=r.read_text(cur); scan_nonmod(cur, txt)
-        inst=set()
+        inst = set()
         if txt:
-            for m in SV_INSTANTIATION_RE.finditer(txt):
-                if not EXCLUDE_BEFORE_RE.search(txt[max(0,m.start()-64):m.start()]): inst.add(m.group("mod"))
-        if lvl>0 and inst:
-            for lo in range(lvl-1,-1,-1):
-                mods=r.level_to_mods.get(lo,{})
+            code = strip_sv_comments(txt)
+            for m in SV_INSTANTIATION_RE.finditer(code):
+                if not EXCLUDE_BEFORE_RE.search(code[max(0, m.start()-64):m.start()]):
+                    inst.add(m.group("mod"))
+        if inst:
+            # Prefer same-repo matches in levels <= current (including equal)
+            for lo in range(lvl, -1, -1):
+                mods = r.level_to_mods.get(lo, {})
                 for mod in inst:
-                    rel=mods.get(mod);  ap=r.resolve(rel) if rel else None
-                    if not ap or (txt and file_defines_module(txt,mod)): continue
-                    if ap not in used: used.add(ap)
-                    dep[cur].append((ap, lo, r.name))
-                    if lo>0: q.append((ri,ap,lo))
+                    rel = mods.get(mod)
+                    ap = r.resolve(rel) if rel else None
+                    # Skip if the current file actually defines this module (avoid self-loop)
+                    if not ap or (txt and file_defines_module(txt, mod)):
+                        continue
+                    if _allow_file(ri, rel, ap):
+                        if ap not in used:
+                            used.add(ap)
+                        dep[cur].append((ap, lo, r.name))
+                        # Always enqueue so we also traverse level-0 children
+                        q.append((ri, ap, lo))
+
+            # Fallback: if a module wasn't found in <= lvl, try other levels in same repo
+            for mod in inst:
+                if any(mod in r.level_to_mods.get(lo, {}) for lo in range(lvl, -1, -1)):
+                    continue  # already handled
+                for lo, mods in r.level_to_mods.items():
+                    rel = mods.get(mod)
+                    if not rel:
+                        continue
+                    ap = r.resolve(rel)
+                    if not ap or (txt and file_defines_module(txt, mod)):
+                        continue
+                    if _allow_file(ri, rel, ap):
+                        if ap not in used:
+                            used.add(ap)
+                        dep[cur].append((ap, lo, r.name))
+                        q.append((ri, ap, lo))
+                        break  # first hit is enough
         if inst:
             for mod in inst:
-                cands=sorted(mod_idx.get(mod,[]), key=lambda t: t[2] or 0)
-                for rj,rel,lv in cands:
-                    if rj==ri: continue
-                    ap=repos[rj].resolve(rel)
-                    if not ap: continue
-                    if ap not in used: used.add(ap)
-                    dep[cur].append((ap, lv, repos[rj].name))
-                    if lv and lv>0: q.append((rj,ap,lv))
+                cands = sorted(mod_idx.get(mod, []), key=lambda t: t[2] or 0)
+                for rj, rel, lv in cands:
+                    if rj == ri:
+                        continue  # same-repo handled above
+                    ap = repos[rj].resolve(rel)
+                    if not ap:
+                        continue
+                    if _allow_file(rj, rel, ap):
+                        if ap not in used:
+                            used.add(ap)
+                        dep[cur].append((ap, lv, repos[rj].name))
+                        if lv and lv > 0:
+                            q.append((rj, ap, lv))
     return used, dep
 
-# -------- JSON trimming --------
 def trim_json_manifest(full_path:str, used_abs:Set[str], out_path:str):
     data=json.load(open(full_path,"r",encoding="utf-8"))
     used_norm={norm(p) for p in used_abs}
@@ -305,30 +377,6 @@ def trim_json_manifest(full_path:str, used_abs:Set[str], out_path:str):
                          "defines":{},"files":sorted(miss)})
     with open(out_path,"w",encoding="utf-8") as f:
         json.dump(data,f,indent=2,ensure_ascii=False); f.write("\n")
-
-# -------- (legacy) flist trimming --------
-def extract_path_from_line(line:str)->Optional[str]:
-    s=line.strip()
-    if not s or s.startswith("#"): return None
-    for tok in reversed(s.split()):
-        t=tok.strip('",')
-        if t.endswith((".sv",".v",".svh")): return t
-    m=re.search(r'"([^"]+\.(?:svh?|v))"', s);  return m.group(1) if m else None
-
-def trim_filelist(full_f:str, used_abs:Set[str], out_f:str):
-    lines=open(full_f,"r",encoding="utf-8").read().splitlines()
-    used_norm={os.path.normpath(p) for p in used_abs}; kept=[]; seen=set()
-    for ln in lines:
-        p=extract_path_from_line(ln)
-        if not p: kept.append(ln); continue
-        ap=norm(p if os.path.isabs(p) else os.path.abspath(p))
-        if ap in used_norm: kept.append(ln); seen.add(ap)
-    miss=[p for p in used_abs if p.endswith(".svh") and os.path.normpath(p) not in seen]
-    if miss:
-        kept+=["", "# Appended headers detected via `include`/package use"]
-        kept+=sorted(os.path.relpath(h,start=os.getcwd()) for h in miss)
-    with open(out_f,"w",encoding="utf-8") as f:
-        f.write("\n".join(kept)+("\n" if kept and not kept[-1].endswith("\n") else ""))
 
 def derive_suffix(targets: List[str]) -> str:
     ts=set(t.lower() for t in targets)
@@ -429,8 +477,21 @@ def main():
               "or include -t rtl if you do want the RTL top included.", file=sys.stderr)
         sys.exit(1)
 
+    # Determine DUT absolute path(s) from --top (file-name based) so that we can
+    # exclude them when -t rtl is NOT passed.
+    dut_abs_paths: Set[str] = set()
+    for p, l in tops:
+        ap = main_repo.resolve(p)
+        if ap:
+            dut_abs_paths.add(ap)
+
     # Traverse and trim
-    used_set, dep_tree = collect_used_set(repos, starts)
+    used_set, dep_tree = collect_used_set(
+        repos,
+        starts,
+        allow_rtl=has_rtl,
+        dut_abs_paths=dut_abs_paths
+    )
 
     if args.show_tree:
         print(f"\n[Dependency Tree][{suffix.upper()}]")
